@@ -1,4 +1,4 @@
-module github.com/xbclub/BilibiliDanmuRobot-Core
+module github.com/teaPartyovo/BilibiliDanmuRobot-Core
 
 go 1.21.1
 
@@ -67,4 +67,4 @@ require (
 	modernc.org/sqlite v1.23.1 // indirect
 )
 
-replace github.com/xbclub/BilibiliDanmuRobot-Core => github.com/teaPartyovo/BilibiliDanmuRobot-Core v0.0.0-20241002032015-11bdb58ba274
+//replace github.com/xbclub/BilibiliDanmuRobot-Core => github.com/teaPartyovo/BilibiliDanmuRobot-Core v0.0.0-20241002032015-11bdb58ba274
