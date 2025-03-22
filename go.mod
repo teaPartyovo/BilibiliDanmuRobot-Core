@@ -66,3 +66,5 @@ require (
 	modernc.org/memory v1.5.0 // indirect
 	modernc.org/sqlite v1.23.1 // indirect
 )
+
+replace github.com/xbclub/BilibiliDanmuRobot-Core => github.com/teaPartyovo/BilibiliDanmuRobot-Core v0.0.0-20241002032015-11bdb58ba274

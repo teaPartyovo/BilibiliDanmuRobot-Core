@@ -115,3 +115,83 @@ func DoBlindBoxStat(msg, uid, username string, svcCtx *svc.ServiceContext, reply
 		logx.Alert("盲盒统计出错了!" + err.Error())
 	}
 }
+
+// DoBlindBoxStatByType 处理特定类型盲盒的统计
+// 修改 DoBlindBoxStatByType 的函数签名
+func DoBlindBoxStatByType(msg, uid, username string, svcCtx *svc.ServiceContext, reply ...*entity.DanmuMsgTextReplyInfo) {
+	if !svcCtx.Config.BlindBoxStat {
+		return
+	}
+
+	reg := `(?P<month>^[0-9]+)月(?P<type>[^盲]+)盲盒$`
+	re := regexp.MustCompile(reg)
+	match := re.FindStringSubmatch(msg)
+
+	if len(match) != 3 {
+		return
+	}
+
+	month, err := strconv.Atoi(match[1])
+	if err != nil || month < 1 || month > 12 {
+		logic.PushToBulletSender(fmt.Sprintf("月份「%s」不正确!", match[1]), reply...)
+		return
+	}
+
+	id, err := strconv.ParseInt(uid, 10, 64)
+	if err != nil {
+		logx.Error(err)
+		logic.PushToBulletSender(errInfo, reply...)
+		return
+	}
+
+	now := carbon.Now(carbon.Local)
+	var ret *model.Result
+
+	// 主播查询本月所有数据
+	if svcCtx.UserID == id {
+		ret, err = svcCtx.BlindBoxStatModel.GetTotalByType(context.Background(), match[2], int16(now.Year()), int16(month), 0)
+	} else {
+		// 用户查询自己的数据
+		ret, err = svcCtx.BlindBoxStatModel.GetTotalOnePersonByType(context.Background(), id, match[2], int16(now.Year()), int16(month), 0)
+	}
+
+	if err == nil {
+		r := float64(ret.R) / float64(1000.0)
+		if ret.R > 0 {
+			logic.PushToBulletSender(
+				fmt.Sprintf(
+					"%s月%s盲盒共开%d个, 赚了＋%.2f元",
+					match[1],
+					match[2],
+					ret.C,
+					r,
+				),
+				reply...,
+			)
+		} else if ret.R == 0 {
+			logic.PushToBulletSender(
+				fmt.Sprintf(
+					"%s月%s盲盒共开%d个, 没亏没赚!",
+					match[1],
+					match[2],
+					ret.C,
+				),
+				reply...,
+			)
+		} else {
+			logic.PushToBulletSender(
+				fmt.Sprintf(
+					"%s月%s盲盒共开%d个, 亏了－%.2f元",
+					match[1],
+					match[2],
+					ret.C,
+					math.Abs(r),
+				),
+				reply...,
+			)
+		}
+	} else {
+		logic.PushToBulletSender(errInfo, reply...)
+		logx.Alert("盲盒统计出错了!" + err.Error())
+	}
+}
