@@ -12,6 +12,7 @@ require (
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/sashabaranov/go-openai v1.24.1
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
+	github.com/xbclub/BilibiliDanmuRobot-Core v0.0.0-00010101000000-000000000000
 	github.com/zeromicro/go-zero v1.5.6
 	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/gorm v1.25.5
@@ -67,4 +68,4 @@ require (
 	modernc.org/sqlite v1.23.1 // indirect
 )
 
-//replace github.com/xbclub/BilibiliDanmuRobot-Core => github.com/teaPartyovo/BilibiliDanmuRobot-Core v0.0.0-20241002032015-11bdb58ba274
+replace github.com/xbclub/BilibiliDanmuRobot-Core => github.com/teaPartyovo/BilibiliDanmuRobot-Core v1.1.20
