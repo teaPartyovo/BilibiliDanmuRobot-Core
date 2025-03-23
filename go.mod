@@ -68,4 +68,8 @@ require (
 	modernc.org/sqlite v1.23.1 // indirect
 )
 
+// 移除这个依赖，因为它指向了一个无效的版本
+//- github.com/xbclub/BilibiliDanmuRobot-Core v0.0.0-00010101000000-000000000000
+
+// 修改 replace 指令
 replace github.com/xbclub/BilibiliDanmuRobot-Core => github.com/teaPartyovo/BilibiliDanmuRobot-Core v1.1.20
