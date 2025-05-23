@@ -13,6 +13,8 @@ type (
 		Insert(ctx context.Context, tx *gorm.DB, data *BlindBoxStatBase) error
 		GetTotalOnePersion(ctx context.Context, uid int64, year, month, day int16) (*Result, error)
 		GetTotal(ctx context.Context, year, month, day int16) (*Result, error)
+		GetTotalByType(ctx context.Context, boxType string, year, month, day int16) (*Result, error)
+		GetTotalOnePersonByType(ctx context.Context, uid int64, boxType string, year, month, day int16) (*Result, error)
 	}
 	defaultBlindBoxStatModel struct {
 		conn  *gorm.DB
@@ -96,6 +98,62 @@ func (m *defaultBlindBoxStatModel) GetTotal(ctx context.Context, year, month, da
 	}
 	err := d.Take(&resp).Error
 
+	switch err {
+	case nil:
+		return &resp, nil
+	case ErrNotFound:
+		return nil, ErrNotFound
+	default:
+		return nil, err
+	}
+}
+
+// 实现新增的方法
+func (m *defaultBlindBoxStatModel) GetTotalByType(ctx context.Context, boxType string, year, month, day int16) (*Result, error) {
+	var resp Result
+	db := m.conn.WithContext(ctx).Table(m.table).
+		Select("sum(cnt) as C, (sum(cnt*Price)-sum(cnt*original_gift_price)) as R"). // 修改 SQL 表达式以保持一致性
+		Where("blind_box_name LIKE ?", "%"+boxType+"%")
+
+	if year > 0 {
+		db = db.Where("year = ?", year)
+	}
+	if month > 0 {
+		db = db.Where("month = ?", month)
+	}
+	if day > 0 {
+		db = db.Where("day = ?", day)
+	}
+
+	err := db.Take(&resp).Error
+	switch err { // 添加错误处理逻辑，与其他方法保持一致
+	case nil:
+		return &resp, nil
+	case ErrNotFound:
+		return nil, ErrNotFound
+	default:
+		return nil, err
+	}
+}
+
+func (m *defaultBlindBoxStatModel) GetTotalOnePersonByType(ctx context.Context, uid int64, boxType string, year, month, day int16) (*Result, error) {
+	var resp Result
+	db := m.conn.WithContext(ctx).Table(m.table).
+		Select("sum(cnt) as C, (sum(cnt*Price)-sum(cnt*original_gift_price)) as R").
+		Where("uid = ?", uid).
+		Where("blind_box_name LIKE ?", "%"+boxType+"%")
+
+	if year > 0 {
+		db = db.Where("year = ?", year)
+	}
+	if month > 0 {
+		db = db.Where("month = ?", month)
+	}
+	if day > 0 {
+		db = db.Where("day = ?", day)
+	}
+
+	err := db.Take(&resp).Error
 	switch err {
 	case nil:
 		return &resp, nil

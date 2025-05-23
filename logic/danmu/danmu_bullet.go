@@ -93,9 +93,10 @@ func StartDanmuLogic(ctx context.Context, svcCtx *svc.ServiceContext) {
 			if svcCtx.Config.DrawByLot {
 				go DodrawByLotProcess(danmumsg, from[1].(string), svcCtx, reply)
 			}
-			// 盲盒统计
+			// 在处理盲盒统计的部分添加新的方法调用
 			if svcCtx.Config.BlindBoxStat {
 				go DoBlindBoxStat(danmumsg, uid, from[1].(string), svcCtx, reply)
+				go DoBlindBoxStatByType(danmumsg, uid, from[1].(string), svcCtx, reply)
 			}
 			if len(danmumsg) > 0 && uid == strconv.FormatInt(svcCtx.UserID, 10) {
 				// 主播指令控制
