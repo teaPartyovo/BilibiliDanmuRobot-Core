@@ -112,7 +112,7 @@ func (m *defaultBlindBoxStatModel) GetTotal(ctx context.Context, year, month, da
 func (m *defaultBlindBoxStatModel) GetTotalByType(ctx context.Context, boxType string, year, month, day int16) (*Result, error) {
 	var resp Result
 	db := m.conn.WithContext(ctx).Table(m.table).
-		Select("sum(cnt) as C, (sum(cnt*Price)-sum(cnt*original_gift_price)) as R"). // 修改 SQL 表达式以保持一致性
+		Select("sum(cnt) as C, sum(cnt * Price - cnt * original_gift_price) as R").
 		Where("blind_box_name LIKE ?", "%"+boxType+"%")
 
 	if year > 0 {
@@ -126,20 +126,16 @@ func (m *defaultBlindBoxStatModel) GetTotalByType(ctx context.Context, boxType s
 	}
 
 	err := db.Take(&resp).Error
-	switch err { // 添加错误处理逻辑，与其他方法保持一致
-	case nil:
-		return &resp, nil
-	case ErrNotFound:
-		return nil, ErrNotFound
-	default:
+	if err != nil {
 		return nil, err
 	}
+	return &resp, nil
 }
 
 func (m *defaultBlindBoxStatModel) GetTotalOnePersonByType(ctx context.Context, uid int64, boxType string, year, month, day int16) (*Result, error) {
 	var resp Result
 	db := m.conn.WithContext(ctx).Table(m.table).
-		Select("sum(cnt) as C, (sum(cnt*Price)-sum(cnt*original_gift_price)) as R").
+		Select("sum(cnt) as C, sum(cnt * Price - cnt * original_gift_price) as R").
 		Where("uid = ?", uid).
 		Where("blind_box_name LIKE ?", "%"+boxType+"%")
 
@@ -154,12 +150,8 @@ func (m *defaultBlindBoxStatModel) GetTotalOnePersonByType(ctx context.Context, 
 	}
 
 	err := db.Take(&resp).Error
-	switch err {
-	case nil:
-		return &resp, nil
-	case ErrNotFound:
-		return nil, ErrNotFound
-	default:
+	if err != nil {
 		return nil, err
 	}
+	return &resp, nil
 }
