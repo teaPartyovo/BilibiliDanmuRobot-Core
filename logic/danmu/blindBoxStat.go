@@ -57,10 +57,10 @@ func DoBlindBoxStat(msg, uid, username string, svcCtx *svc.ServiceContext, reply
 
 	// 获取当前时间
 	now := carbon.Now(carbon.Local)
-	
+
 	// 解析年份，如果未指定则使用当前年份
 	var year int
-	var err error  // 添加 err 变量声明
+	var err error // 添加 err 变量声明
 	if match[1] != "" {
 		year, err = strconv.Atoi(match[1])
 		if err != nil || year < 2000 || year > 9999 {
@@ -166,10 +166,10 @@ func DoBlindBoxStatByType(msg, uid, username string, svcCtx *svc.ServiceContext,
 	}
 
 	now := carbon.Now(carbon.Local)
-	
+
 	// 解析年份，如果未指定则使用当前年份
 	var year int
-	var err error  // 添加 err 变量声明
+	var err error // 添加 err 变量声明
 	if match[1] != "" {
 		year, err = strconv.Atoi(match[1])
 		if err != nil || year < 2000 || year > 9999 {
@@ -193,7 +193,7 @@ func DoBlindBoxStatByType(msg, uid, username string, svcCtx *svc.ServiceContext,
 		return
 	}
 
-	now := carbon.Now(carbon.Local)
+	now = carbon.Now(carbon.Local)
 	var ret *model.Result
 
 	// 主播查询本月所有数据
