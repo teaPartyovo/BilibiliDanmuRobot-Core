@@ -6,6 +6,7 @@ import (
 	"math"
 	"regexp"
 	"strconv"
+	"strings"
 
 	_ "github.com/glebarez/go-sqlite"
 	"github.com/golang-module/carbon/v2"
