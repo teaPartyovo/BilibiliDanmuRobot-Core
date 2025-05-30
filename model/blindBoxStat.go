@@ -86,14 +86,46 @@ func (m *defaultBlindBoxStatModel) GetTotalOnePersion(ctx context.Context, uid i
 func (m *defaultBlindBoxStatModel) GetTotal(ctx context.Context, year, month, day int16) (*Result, error) {
 	var resp Result
 
-	d := m.conn.WithContext(ctx).Table(m.table).Model(&BlindBoxStatBase{}).Select(`sum(cnt) as C, (sum(cnt*Price)-sum(cnt*original_gift_price)) as R`)
+	d := m.conn.WithContext(ctx).Table(m.table).Model(&BlindBoxStatBase{}).
+		Select(`sum(cnt) as C, (sum(cnt*Price)-sum(cnt*original_gift_price)) as R`)
+
+	// 修改查询条件组合方式
 	if day > 0 {
+		// 如果指定了日期，必须精确匹配年月日
 		d = d.Where("year = ? AND month = ? AND day = ?", year, month, day)
-	} else if month > 0 {
+	} else {
+		// 如果只指定了月份，则匹配整月数据
 		d = d.Where("year = ? AND month = ?", year, month)
-	} else if year > 0 {
-		d = d.Where("year = ?", year)
 	}
+
+	err := d.Take(&resp).Error
+
+	switch err {
+	case nil:
+		return &resp, nil
+	case ErrNotFound:
+		return nil, ErrNotFound
+	default:
+		return nil, err
+	}
+}
+
+func (m *defaultBlindBoxStatModel) GetTotalOnePersion(ctx context.Context, uid int64, year, month, day int16) (*Result, error) {
+	var resp Result
+
+	d := m.conn.WithContext(ctx).Table(m.table).Model(&BlindBoxStatBase{}).
+		Select(`sum(cnt) as C, (sum(cnt*Price)-sum(cnt*original_gift_price)) as R`).
+		Where("uid = ?", uid)
+
+	// 修改查询条件组合方式
+	if day > 0 {
+		// 如果指定了日期，必须精确匹配年月日
+		d = d.Where("year = ? AND month = ? AND day = ?", year, month, day)
+	} else {
+		// 如果只指定了月份，则匹配整月数据
+		d = d.Where("year = ? AND month = ?", year, month)
+	}
+
 	err := d.Take(&resp).Error
 
 	switch err {
@@ -114,11 +146,11 @@ func (m *defaultBlindBoxStatModel) GetTotalByType(ctx context.Context, boxType s
 		Where("blind_box_name LIKE ?", "%"+boxType+"%")
 
 	if day > 0 {
-		db = db.Where("year = ? AND month = ? AND day = ?", year, month, day)
-	} else if month > 0 {
-		db = db.Where("year = ? AND month = ?", year, month)
-	} else if year > 0 {
-		db = db.Where("year = ?", year)
+		// 如果指定了日期，必须精确匹配年月日
+		d = d.Where("year = ? AND month = ? AND day = ?", year, month, day)
+	} else {
+		// 如果只指定了月份，则匹配整月数据
+		d = d.Where("year = ? AND month = ?", year, month)
 	}
 
 	err := db.Take(&resp).Error
@@ -135,14 +167,12 @@ func (m *defaultBlindBoxStatModel) GetTotalOnePersonByType(ctx context.Context, 
 		Where("uid = ?", uid).
 		Where("blind_box_name LIKE ?", "%"+boxType+"%")
 
-	if year > 0 {
-		db = db.Where("year = ?", year)
-	}
-	if month > 0 {
-		db = db.Where("month = ?", month)
-	}
 	if day > 0 {
-		db = db.Where("day = ?", day)
+		// 如果指定了日期，必须精确匹配年月日
+		d = d.Where("year = ? AND month = ? AND day = ?", year, month, day)
+	} else {
+		// 如果只指定了月份，则匹配整月数据
+		d = d.Where("year = ? AND month = ?", year, month)
 	}
 
 	err := db.Take(&resp).Error

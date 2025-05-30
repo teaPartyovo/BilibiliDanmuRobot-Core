@@ -57,8 +57,8 @@ func DoBlindBoxStat(msg, uid, username string, svcCtx *svc.ServiceContext, reply
 		month = now.Month()
 		day = now.Day()
 	} else {
-		// 修改正则表达式以更好地支持可选的年月日
-		reg := `^(?:(?:(?P<year>\d{4})年)?(?P<month>\d{1,2})月)?(?:(?P<day>\d{1,2})日)?盲盒$`
+		// 修改正则表达式以更严格地匹配日期格式
+		reg := `^(?:(\d{4})年)?(\d{1,2})月(?:(\d{1,2})日)?盲盒$`
 		re := regexp.MustCompile(reg)
 		match := re.FindStringSubmatch(msg)
 
@@ -77,15 +77,11 @@ func DoBlindBoxStat(msg, uid, username string, svcCtx *svc.ServiceContext, reply
 			year = now.Year()
 		}
 
-		// 解析月份（可选）
-		if match[2] != "" {
-			month, err = strconv.Atoi(match[2])
-			if err != nil || month < 1 || month > 12 {
-				logic.PushToBulletSender(fmt.Sprintf("月份「%s」不正确!", match[2]), reply...)
-				return
-			}
-		} else {
-			month = now.Month()
+		// 解析月份（必需）
+		month, err = strconv.Atoi(match[2])
+		if err != nil || month < 1 || month > 12 {
+			logic.PushToBulletSender(fmt.Sprintf("月份「%s」不正确!", match[2]), reply...)
+			return
 		}
 
 		// 解析日期（可选）
