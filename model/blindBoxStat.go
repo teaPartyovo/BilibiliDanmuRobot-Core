@@ -87,14 +87,12 @@ func (m *defaultBlindBoxStatModel) GetTotal(ctx context.Context, year, month, da
 	var resp Result
 
 	d := m.conn.WithContext(ctx).Table(m.table).Model(&BlindBoxStatBase{}).Select(`sum(cnt) as C, (sum(cnt*Price)-sum(cnt*original_gift_price)) as R`)
-	if year > 0 {
-		d = d.Where("year = ?", year)
-	}
-	if month > 0 {
-		d = d.Where("month = ?", month)
-	}
 	if day > 0 {
-		d = d.Where("day = ?", day)
+		d = d.Where("year = ? AND month = ? AND day = ?", year, month, day)
+	} else if month > 0 {
+		d = d.Where("year = ? AND month = ?", year, month)
+	} else if year > 0 {
+		d = d.Where("year = ?", year)
 	}
 	err := d.Take(&resp).Error
 
@@ -115,14 +113,12 @@ func (m *defaultBlindBoxStatModel) GetTotalByType(ctx context.Context, boxType s
 		Select("sum(cnt) as C, sum(cnt * Price - cnt * original_gift_price) as R").
 		Where("blind_box_name LIKE ?", "%"+boxType+"%")
 
-	if year > 0 {
-		db = db.Where("year = ?", year)
-	}
-	if month > 0 {
-		db = db.Where("month = ?", month)
-	}
 	if day > 0 {
-		db = db.Where("day = ?", day)
+		db = db.Where("year = ? AND month = ? AND day = ?", year, month, day)
+	} else if month > 0 {
+		db = db.Where("year = ? AND month = ?", year, month)
+	} else if year > 0 {
+		db = db.Where("year = ?", year)
 	}
 
 	err := db.Take(&resp).Error
