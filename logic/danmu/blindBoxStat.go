@@ -57,12 +57,13 @@ func DoBlindBoxStat(msg, uid, username string, svcCtx *svc.ServiceContext, reply
 		month = now.Month()
 		day = now.Day()
 	} else {
-		// 修改正则表达式以更好地支持可选的年月日
+		// 修改正则表达式，确保只匹配纯盲盒查询
 		reg := `^(?:(?P<year>\d{4})年)?(?P<month>\d{1,2})月(?:(?P<day>\d{1,2})日)?盲盒$`
 		re := regexp.MustCompile(reg)
 		match := re.FindStringSubmatch(msg)
 
-		if len(match) == 0 {
+		// 检查是否包含其他字符（比如类型名称）
+		if len(match) == 0 || strings.Contains(msg, "盲盒") != strings.HasSuffix(msg, "盲盒") {
 			return
 		}
 
