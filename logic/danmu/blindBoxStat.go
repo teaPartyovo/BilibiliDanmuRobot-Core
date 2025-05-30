@@ -47,48 +47,51 @@ func DoBlindBoxStat(msg, uid, username string, svcCtx *svc.ServiceContext, reply
 		return
 	}
 
-	// 获取当前时间
 	now := carbon.Now(carbon.Local)
 	var year, month, day int
 	var err error
 
-	if msg == "今日盲盒" {
+	reg := `^(今日|\d{1,2}月(?:\d{1,2}日)?|\d{4}年\d{1,2}月(?:\d{1,2}日)?)盲盒$`
+	re := regexp.MustCompile(reg)
+	match := re.FindStringSubmatch(msg)
+
+	if len(match) == 0 {
+		return
+	}
+
+	dateStr := match[1]
+
+	if dateStr == "今日" {
 		year = now.Year()
 		month = now.Month()
 		day = now.Day()
 	} else {
-		// 修改正则表达式以更严格地匹配日期格式
-		reg := `^(?:(\d{4})年)?(\d{1,2})月(?:(\d{1,2})日)?盲盒$`
-		re := regexp.MustCompile(reg)
-		match := re.FindStringSubmatch(msg)
-
-		if len(match) == 0 {
-			return
-		}
-
-		// 解析年份（可选）
-		if match[1] != "" {
-			year, err = strconv.Atoi(match[1])
+		// 解析年月日
+		parts := strings.Split(strings.TrimSuffix(dateStr, "日"), "月")
+		if strings.Contains(parts[0], "年") {
+			// 包含年份
+			yearMonth := strings.Split(parts[0], "年")
+			year, err = strconv.Atoi(yearMonth[0])
 			if err != nil || year < 2000 || year > 9999 {
-				logic.PushToBulletSender(fmt.Sprintf("年份「%s」不正确!", match[1]), reply...)
+				logic.PushToBulletSender(fmt.Sprintf("年份「%s」不正确!", yearMonth[0]), reply...)
 				return
 			}
+			month, err = strconv.Atoi(yearMonth[1])
 		} else {
+			// 不包含年份
 			year = now.Year()
+			month, err = strconv.Atoi(parts[0])
 		}
 
-		// 解析月份（必需）
-		month, err = strconv.Atoi(match[2])
 		if err != nil || month < 1 || month > 12 {
-			logic.PushToBulletSender(fmt.Sprintf("月份「%s」不正确!", match[2]), reply...)
+			logic.PushToBulletSender(fmt.Sprintf("月份「%d」不正确!", month), reply...)
 			return
 		}
 
-		// 解析日期（可选）
-		if match[3] != "" {
-			day, err = strconv.Atoi(match[3])
+		if len(parts) > 1 && parts[1] != "" {
+			day, err = strconv.Atoi(parts[1])
 			if err != nil || day < 1 || day > 31 {
-				logic.PushToBulletSender(fmt.Sprintf("日期「%s」不正确!", match[3]), reply...)
+				logic.PushToBulletSender(fmt.Sprintf("日期「%s」不正确!", parts[1]), reply...)
 				return
 			}
 		}
@@ -165,58 +168,56 @@ func DoBlindBoxStatByType(msg, uid, username string, svcCtx *svc.ServiceContext,
 		return
 	}
 
-	// 获取当前时间
 	now := carbon.Now(carbon.Local)
 	var year, month, day int
 	var err error
 	var boxType string
 
-	if strings.HasPrefix(msg, "今日") {
+	reg := `^(今日|\d{1,2}月(?:\d{1,2}日)?|\d{4}年\d{1,2}月(?:\d{1,2}日)?)(.+?)盲盒$`
+	re := regexp.MustCompile(reg)
+	match := re.FindStringSubmatch(msg)
+
+	if len(match) == 0 {
+		return
+	}
+
+	dateStr := match[1]
+	boxType = match[2]
+
+	if dateStr == "今日" {
 		year = now.Year()
 		month = now.Month()
 		day = now.Day()
-		boxType = strings.TrimSuffix(strings.TrimPrefix(msg, "今日"), "盲盒")
 	} else {
-		// 修改正则表达式以支持特定类型盲盒
-		reg := `^(?:(?:(?P<year>\d{4})年)?(?P<month>\d{1,2})月)?(?:(?P<day>\d{1,2})日)?(?P<type>[^盲]+)盲盒$`
-		re := regexp.MustCompile(reg)
-		match := re.FindStringSubmatch(msg)
+		// 解析年月日
+		parts := strings.Split(strings.TrimSuffix(dateStr, "日"), "月")
+		if strings.Contains(parts[0], "年") {
+			// 包含年份
+			yearMonth := strings.Split(parts[0], "年")
+			year, err = strconv.Atoi(yearMonth[0])
+			if err != nil || year < 2000 || year > 9999 {
+				logic.PushToBulletSender(fmt.Sprintf("年份「%s」不正确!", yearMonth[0]), reply...)
+				return
+			}
+			month, err = strconv.Atoi(yearMonth[1])
+		} else {
+			// 不包含年份
+			year = now.Year()
+			month, err = strconv.Atoi(parts[0])
+		}
 
-		if len(match) == 0 {
+		if err != nil || month < 1 || month > 12 {
+			logic.PushToBulletSender(fmt.Sprintf("月份「%d」不正确!", month), reply...)
 			return
 		}
 
-		// 解析年份（可选）
-		if match[1] != "" {
-			year, err = strconv.Atoi(match[1])
-			if err != nil || year < 2000 || year > 9999 {
-				logic.PushToBulletSender(fmt.Sprintf("年份「%s」不正确!", match[1]), reply...)
-				return
-			}
-		} else {
-			year = now.Year()
-		}
-
-		// 解析月份（可选）
-		if match[2] != "" {
-			month, err = strconv.Atoi(match[2])
-			if err != nil || month < 1 || month > 12 {
-				logic.PushToBulletSender(fmt.Sprintf("月份「%s」不正确!", match[2]), reply...)
-				return
-			}
-		} else {
-			month = now.Month()
-		}
-
-		// 解析日期（可选）
-		if match[3] != "" {
-			day, err = strconv.Atoi(match[3])
+		if len(parts) > 1 && parts[1] != "" {
+			day, err = strconv.Atoi(parts[1])
 			if err != nil || day < 1 || day > 31 {
-				logic.PushToBulletSender(fmt.Sprintf("日期「%s」不正确!", match[3]), reply...)
+				logic.PushToBulletSender(fmt.Sprintf("日期「%s」不正确!", parts[1]), reply...)
 				return
 			}
 		}
-		boxType = match[4]
 	}
 
 	id, err := strconv.ParseInt(uid, 10, 64)
