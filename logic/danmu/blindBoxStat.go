@@ -52,10 +52,6 @@ func DoBlindBoxStat(msg, uid, username string, svcCtx *svc.ServiceContext, reply
 	var year, month, day int
 	var err error
 
-	if !strings.HasSuffix(msg, "盲盒") || (strings.Contains(msg, "盲盒") && len(msg) > 2 && !strings.HasSuffix(msg, "盲盒")) {
-		return
-	}
-
 	if msg == "今日盲盒" {
 		year = now.Year()
 		month = now.Month()
@@ -170,10 +166,6 @@ func DoBlindBoxStat(msg, uid, username string, svcCtx *svc.ServiceContext, reply
 
 func DoBlindBoxStatByType(msg, uid, username string, svcCtx *svc.ServiceContext, reply ...*entity.DanmuMsgTextReplyInfo) {
 	if !svcCtx.Config.BlindBoxStat {
-		return
-	}
-
-	if !strings.Contains(msg, "盲盒") || strings.HasSuffix(msg, "盲盒") && !strings.Contains(msg, " ") {
 		return
 	}
 
