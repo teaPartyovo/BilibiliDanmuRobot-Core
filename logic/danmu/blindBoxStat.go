@@ -173,7 +173,7 @@ func DoBlindBoxStatByType(msg, uid, username string, svcCtx *svc.ServiceContext,
 	var err error
 	var boxType string
 
-	reg := `^(今日|\d{1,2}月(?:\d{1,2}日)?|\d{4}年\d{1,2}月(?:\d{1,2}日)?)(.+?)盲盒$`
+	reg := `^(今日|\d{1,2}月(?:\d{1,2}日)?|\d{4}年\d{1,2}月(?:\d{1,2}日)?)([^\d日]+?)盲盒$`
 	re := regexp.MustCompile(reg)
 	match := re.FindStringSubmatch(msg)
 
