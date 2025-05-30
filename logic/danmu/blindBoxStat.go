@@ -120,11 +120,11 @@ func DoBlindBoxStat(msg, uid, username string, svcCtx *svc.ServiceContext, reply
 		r := float64(ret.R) / float64(1000.0)
 		var dateStr string
 		if msg == "今日盲盒" {
-			dateStr = fmt.Sprintf("%d年%d月%d日", year, month, day)
+			dateStr = fmt.Sprintf("%d-%d-%d", year, month, day)
 		} else if day > 0 {
-			dateStr = fmt.Sprintf("%d年%d月%d日", year, month, day)
+			dateStr = fmt.Sprintf("%d-%d-%d", year, month, day)
 		} else {
-			dateStr = fmt.Sprintf("%d年%d月", year, month)
+			dateStr = fmt.Sprintf("%d-%d", year, month)
 		}
 
 		if ret.R > 0 {
@@ -241,11 +241,11 @@ func DoBlindBoxStatByType(msg, uid, username string, svcCtx *svc.ServiceContext,
 		r := float64(ret.R) / float64(1000.0)
 		var dateStr string
 		if strings.HasPrefix(msg, "今日") {
-			dateStr = fmt.Sprintf("%d年%d月%d日", year, month, day)
+			dateStr = fmt.Sprintf("%d-%d-%d", year, month, day)
 		} else if day > 0 {
-			dateStr = fmt.Sprintf("%d年%d月%d日", year, month, day)
+			dateStr = fmt.Sprintf("%d-%d-%d", year, month, day)
 		} else {
-			dateStr = fmt.Sprintf("%d年%d月", year, month)
+			dateStr = fmt.Sprintf("%d-%d", year, month)
 		}
 
 		if ret.R > 0 {
