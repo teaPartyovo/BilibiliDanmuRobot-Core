@@ -4,9 +4,8 @@
     <option name="autoReloadType" value="ALL" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="b28bdfe3-72f1-40c5-8f3d-7d6f029985d6" name="Changes" comment="新增具体盲盒统计功能">
+    <list default="true" id="b28bdfe3-72f1-40c5-8f3d-7d6f029985d6" name="Changes" comment="新增具体某日统计功能">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/go.mod" beforeDir="false" afterPath="$PROJECT_DIR$/go.mod" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/logic/danmu/blindBoxStat.go" beforeDir="false" afterPath="$PROJECT_DIR$/logic/danmu/blindBoxStat.go" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -141,7 +140,8 @@
   <component name="VcsManagerConfiguration">
     <MESSAGE value="1" />
     <MESSAGE value="新增具体盲盒统计功能" />
-    <option name="LAST_COMMIT_MESSAGE" value="新增具体盲盒统计功能" />
+    <MESSAGE value="新增具体某日统计功能" />
+    <option name="LAST_COMMIT_MESSAGE" value="新增具体某日统计功能" />
   </component>
   <component name="VgoProject">
     <settings-migrated>true</settings-migrated>

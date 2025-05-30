@@ -47,15 +47,6 @@ func DoBlindBoxStat(msg, uid, username string, svcCtx *svc.ServiceContext, reply
 		return
 	}
 
-	// 修改正则表达式以更好地支持可选的年月日
-	reg := `^(?:今日|(?:(?P<year>\d{4})年)?(?P<month>\d{1,2})月(?:(?P<day>\d{1,2})日)?)盲盒$`
-	re := regexp.MustCompile(reg)
-	match := re.FindStringSubmatch(msg)
-
-	if len(match) == 0 {
-		return
-	}
-
 	// 获取当前时间
 	now := carbon.Now(carbon.Local)
 	var year, month, day int
@@ -66,6 +57,15 @@ func DoBlindBoxStat(msg, uid, username string, svcCtx *svc.ServiceContext, reply
 		month = now.Month()
 		day = now.Day()
 	} else {
+		// 修改正则表达式以更好地支持可选的年月日
+		reg := `^(?:(?P<year>\d{4})年)?(?P<month>\d{1,2})月(?:(?P<day>\d{1,2})日)?盲盒$`
+		re := regexp.MustCompile(reg)
+		match := re.FindStringSubmatch(msg)
+
+		if len(match) == 0 {
+			return
+		}
+
 		// 解析年份（可选）
 		if match[1] != "" {
 			year, err = strconv.Atoi(match[1])
@@ -112,21 +112,7 @@ func DoBlindBoxStat(msg, uid, username string, svcCtx *svc.ServiceContext, reply
 		ret, err = svcCtx.BlindBoxStatModel.GetTotalOnePersion(context.Background(), id, int16(year), int16(month), int16(day))
 	}
 
-	if err != nil {
-		logx.Errorf("查询盲盒数据出错: %v", err)
-		logic.PushToBulletSender(errInfo, reply...)
-		return
-	}
-
-	logx.Infof("查询结果 - 数量: %d, 盈亏: %.2f", ret.C, float64(ret.R)/1000.0)
-
-	// 使用解析出的年份查询数据
-	if svcCtx.UserID == id {
-		ret, err = svcCtx.BlindBoxStatModel.GetTotal(context.Background(), int16(year), int16(month), 0)
-	} else {
-		ret, err = svcCtx.BlindBoxStatModel.GetTotalOnePersion(context.Background(), id, int16(year), int16(month), 0)
-	}
-
+	// 删除重复的查询代码，直接使用上面的查询结果
 	if err == nil {
 		r := float64(ret.R) / float64(1000.0)
 		var dateStr string
@@ -179,24 +165,27 @@ func DoBlindBoxStatByType(msg, uid, username string, svcCtx *svc.ServiceContext,
 		return
 	}
 
-	// 修改正则表达式以支持特定类型盲盒
-	reg := `^(?:今日|(?:(?P<year>\d{4})年)?(?P<month>\d{1,2})月(?:(?P<day>\d{1,2})日)?)(?P<type>[^盲]+)盲盒$`
-	re := regexp.MustCompile(reg)
-	match := re.FindStringSubmatch(msg)
-
-	if len(match) == 0 {
-		return
-	}
-
+	// 获取当前时间
 	now := carbon.Now(carbon.Local)
 	var year, month, day int
 	var err error
+	var boxType string
 
 	if strings.HasPrefix(msg, "今日") {
 		year = now.Year()
 		month = now.Month()
 		day = now.Day()
+		boxType = strings.TrimSuffix(strings.TrimPrefix(msg, "今日"), "盲盒")
 	} else {
+		// 修改正则表达式以支持特定类型盲盒
+		reg := `^(?:(?P<year>\d{4})年)?(?P<month>\d{1,2})月(?:(?P<day>\d{1,2})日)?(?P<type>[^盲]+)盲盒$`
+		re := regexp.MustCompile(reg)
+		match := re.FindStringSubmatch(msg)
+
+		if len(match) == 0 {
+			return
+		}
+
 		// 解析年份（可选）
 		if match[1] != "" {
 			year, err = strconv.Atoi(match[1])
@@ -237,10 +226,9 @@ func DoBlindBoxStatByType(msg, uid, username string, svcCtx *svc.ServiceContext,
 
 	// 主播查询本月所有数据
 	if svcCtx.UserID == id {
-		ret, err = svcCtx.BlindBoxStatModel.GetTotalByType(context.Background(), match[4], int16(year), int16(month), int16(day))
+		ret, err = svcCtx.BlindBoxStatModel.GetTotalByType(context.Background(), boxType, int16(year), int16(month), int16(day))
 	} else {
-		// 用户查询自己的数据
-		ret, err = svcCtx.BlindBoxStatModel.GetTotalOnePersonByType(context.Background(), id, match[4], int16(year), int16(month), int16(day))
+		ret, err = svcCtx.BlindBoxStatModel.GetTotalOnePersonByType(context.Background(), id, boxType, int16(year), int16(month), int16(day))
 	}
 
 	if err == nil {
@@ -248,11 +236,10 @@ func DoBlindBoxStatByType(msg, uid, username string, svcCtx *svc.ServiceContext,
 		var dateStr string
 		if strings.HasPrefix(msg, "今日") {
 			dateStr = fmt.Sprintf("%d年%d月%d日", year, month, day)
+		} else if day > 0 {
+			dateStr = fmt.Sprintf("%d年%d月%d日", year, month, day)
 		} else {
 			dateStr = fmt.Sprintf("%d年%d月", year, month)
-			if day > 0 {
-				dateStr = fmt.Sprintf("%d年%d月%d日", year, month, day)
-			}
 		}
 
 		if ret.R > 0 {
@@ -260,7 +247,7 @@ func DoBlindBoxStatByType(msg, uid, username string, svcCtx *svc.ServiceContext,
 				fmt.Sprintf(
 					"%s%s盲盒共开%d个, 赚了＋%.2f元",
 					dateStr,
-					match[4],
+					boxType,
 					ret.C,
 					r,
 				),
@@ -271,7 +258,7 @@ func DoBlindBoxStatByType(msg, uid, username string, svcCtx *svc.ServiceContext,
 				fmt.Sprintf(
 					"%s%s盲盒共开%d个, 没亏没赚!",
 					dateStr,
-					match[4],
+					boxType,
 					ret.C,
 				),
 				reply...,
@@ -281,7 +268,7 @@ func DoBlindBoxStatByType(msg, uid, username string, svcCtx *svc.ServiceContext,
 				fmt.Sprintf(
 					"%s%s盲盒共开%d个, 亏了－%.2f元",
 					dateStr,
-					match[4],
+					boxType,
 					ret.C,
 					math.Abs(r),
 				),
