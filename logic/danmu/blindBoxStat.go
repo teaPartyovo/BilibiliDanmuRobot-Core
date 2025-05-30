@@ -46,35 +46,54 @@ func DoBlindBoxStat(msg, uid, username string, svcCtx *svc.ServiceContext, reply
 		return
 	}
 
-	// 修改正则表达式以支持可选的年份
-	reg := `(?:(?P<year>[0-9]{4})年)?(?P<month>[0-9]+)月盲盒$`
+	// 修改正则表达式以支持年月日
+	reg := `^(?:(?:(?P<year>[0-9]{4})年)?(?P<month>[0-9]+)月(?:(?P<day>[0-9]+)日)?|今日)盲盒$`
 	re := regexp.MustCompile(reg)
 	match := re.FindStringSubmatch(msg)
 
-	if len(match) != 3 {
+	if len(match) == 0 {
 		return
 	}
 
 	// 获取当前时间
 	now := carbon.Now(carbon.Local)
 
-	// 解析年份，如果未指定则使用当前年份
-	var year int
-	var err error // 添加 err 变量声明
-	if match[1] != "" {
-		year, err = strconv.Atoi(match[1])
-		if err != nil || year < 2000 || year > 9999 {
-			logic.PushToBulletSender(fmt.Sprintf("年份「%s」不正确!", match[1]), reply...)
-			return
-		}
-	} else {
-		year = now.Year()
-	}
+	var year, month, day int
+	var err error
 
-	month, err := strconv.Atoi(match[2])
-	if err != nil || month < 1 || month > 12 {
-		logic.PushToBulletSender(fmt.Sprintf("月份「%s」不正确!", match[2]), reply...)
-		return
+	if msg == "今日盲盒" {
+		year = now.Year()
+		month = now.Month()
+		day = now.Day()
+	} else {
+		// 解析年份
+		if match[1] != "" {
+			year, err = strconv.Atoi(match[1])
+			if err != nil || year < 2000 || year > 9999 {
+				logic.PushToBulletSender(fmt.Sprintf("年份「%s」不正确!", match[1]), reply...)
+				return
+			}
+		} else {
+			year = now.Year()
+		}
+
+		// 解析月份
+		if match[2] != "" {
+			month, err = strconv.Atoi(match[2])
+			if err != nil || month < 1 || month > 12 {
+				logic.PushToBulletSender(fmt.Sprintf("月份「%s」不正确!", match[2]), reply...)
+				return
+			}
+		}
+
+		// 解析日期
+		if match[3] != "" {
+			day, err = strconv.Atoi(match[3])
+			if err != nil || day < 1 || day > 31 {
+				logic.PushToBulletSender(fmt.Sprintf("日期「%s」不正确!", match[3]), reply...)
+				return
+			}
+		}
 	}
 
 	id, err := strconv.ParseInt(uid, 10, 64)
@@ -112,12 +131,16 @@ func DoBlindBoxStat(msg, uid, username string, svcCtx *svc.ServiceContext, reply
 
 	if err == nil {
 		r := float64(ret.R) / float64(1000.0)
+		dateStr := fmt.Sprintf("%d年%s月", year, match[2])
+		if day > 0 {
+			dateStr = fmt.Sprintf("%s%d日", dateStr, day)
+		}
+
 		if ret.R > 0 {
 			logic.PushToBulletSender(
 				fmt.Sprintf(
-					"%d年%s月共开%d个, 赚了＋%.2f元",
-					year,
-					match[2],
+					"%s共开%d个, 赚了＋%.2f元",
+					dateStr,
 					ret.C,
 					r,
 				),
@@ -157,7 +180,7 @@ func DoBlindBoxStatByType(msg, uid, username string, svcCtx *svc.ServiceContext,
 		return
 	}
 
-	reg := `(?:(?P<year>[0-9]{4})年)?(?P<month>[0-9]+)月(?P<type>[^盲]+)盲盒$`
+	reg := `^(?:(?:(?P<year>[0-9]{4})年)?(?P<month>[0-9]+)月(?:(?P<day>[0-9]+)日)?|今日)(?P<type>[^盲]+)盲盒$`
 	re := regexp.MustCompile(reg)
 	match := re.FindStringSubmatch(msg)
 
