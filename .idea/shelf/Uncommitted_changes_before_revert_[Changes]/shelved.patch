@@ -1,0 +1,336 @@
+Index: handler/base.go
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>package handler\r\n\r\nimport (\r\n\t\"context\"\r\n\t\"errors\"\r\n\t\"fmt\"\r\n\t_ \"github.com/glebarez/go-sqlite\"\r\n\t\"github.com/robfig/cron/v3\"\r\n\t\"github.com/xbclub/BilibiliDanmuRobot-Core/blivedm-go/client\"\r\n\t_ \"github.com/xbclub/BilibiliDanmuRobot-Core/blivedm-go/utils\"\r\n\t\"github.com/xbclub/BilibiliDanmuRobot-Core/config\"\r\n\t\"github.com/xbclub/BilibiliDanmuRobot-Core/entity\"\r\n\t\"github.com/xbclub/BilibiliDanmuRobot-Core/http\"\r\n\t\"github.com/xbclub/BilibiliDanmuRobot-Core/logic\"\r\n\t\"github.com/xbclub/BilibiliDanmuRobot-Core/logic/danmu\"\r\n\t\"github.com/xbclub/BilibiliDanmuRobot-Core/svc\"\r\n\t\"github.com/xbclub/BilibiliDanmuRobot-Core/utiles\"\r\n\t\"github.com/zeromicro/go-zero/core/conf\"\r\n\t\"github.com/zeromicro/go-zero/core/logx\"\r\n\t\"math/rand\"\r\n\t\"os\"\r\n\t\"reflect\"\r\n\t\"strconv\"\r\n\t\"time\"\r\n)\r\n\r\ntype wsHandler struct {\r\n\tclient *client.Client\r\n\tsvc    *svc.ServiceContext\r\n\t// 机器人\r\n\trobotBulletCtx    context.Context\r\n\trobotBulletCancel context.CancelFunc\r\n\t// 弹幕发送\r\n\tsendBulletCtx    context.Context\r\n\tsendBulletCancel context.CancelFunc\r\n\t// 特效欢迎\r\n\tineterractCtx    context.Context\r\n\tineterractCancel context.CancelFunc\r\n\t//礼物感谢\r\n\tthanksGiftCtx   context.Context\r\n\tthankGiftCancel context.CancelFunc\r\n\t//pk提醒\r\n\tpkCtx    context.Context\r\n\tpkCancel context.CancelFunc\r\n\t//弹幕处理\r\n\tdanmuLogicCtx    context.Context\r\n\tdanmuLogicCancel context.CancelFunc\r\n\t//定时弹幕\r\n\tcorndanmu           *cron.Cron\r\n\tmapCronDanmuSendIdx map[int]int\r\n\tuserId              int\r\n}\r\n\r\nfunc NewWsHandler() WsHandler {\r\n\tctx, err := mustloadConfig()\r\n\tif err != nil {\r\n\t\treturn nil\r\n\t}\r\n\tws := new(wsHandler)\r\n\terr = ws.starthttp()\r\n\tif err != nil {\r\n\t\tlogx.Error(err)\r\n\t\treturn nil\r\n\t}\r\n\tws.client = client.NewClient(ctx.Config.RoomId)\r\n\tws.client.SetCookie(http.CookieStr)\r\n\tws.svc = ctx\r\n\t//初始化定时弹幕\r\n\tws.corndanmu = cron.New(cron.WithParser(cron.NewParser(\r\n\t\tcron.SecondOptional | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow,\r\n\t)))\r\n\tws.mapCronDanmuSendIdx = make(map[int]int)\r\n\r\n\t// 设置uid作为基本配置\r\n\tstrUserId, ok := http.CookieList[\"DedeUserID\"]\r\n\tif !ok {\r\n\t\tlogx.Infof(\"uid加载失败，请重新登录\")\r\n\t\treturn nil\r\n\t}\r\n\tws.userId, err = strconv.Atoi(strUserId)\r\n\tctx.RobotID = strUserId\r\n\troominfo, err := http.RoomInit(ctx.Config.RoomId)\r\n\tif err != nil {\r\n\t\tlogx.Error(err)\r\n\t\t//return nil\r\n\t}\r\n\tctx.UserID = roominfo.Data.Uid\r\n\treturn ws\r\n}\r\nfunc (ws *wsHandler) ReloadConfig() error {\r\n\tctx, err := mustloadConfig()\r\n\toldconfig := *ws.svc.Config\r\n\tif err != nil {\r\n\t\treturn err\r\n\t}\r\n\tws.svc.Config = ctx.Config\r\n\tif ctx.Config.RoomId != oldconfig.RoomId {\r\n\t\tlogx.Infof(\"房间号更改，更换房间号 ：%v\", ctx.Config.RoomId)\r\n\t\tws.client.Stop()\r\n\t\tws.client = client.NewClient(ctx.Config.RoomId)\r\n\t\tws.client.SetCookie(http.CookieStr)\r\n\t\troominfo, err := http.RoomInit(ctx.Config.RoomId)\r\n\t\tif err != nil {\r\n\t\t\tlogx.Error(err)\r\n\t\t\t//return err\r\n\t\t}\r\n\t\tctx.UserID = roominfo.Data.Uid\r\n\t\terr = ws.client.Start()\r\n\t\tif err != nil {\r\n\t\t\treturn err\r\n\t\t}\r\n\t\tws.registerHandler()\r\n\t}\r\n\tif ctx.Config.CronDanmu != oldconfig.CronDanmu || !areSlicesEqual(ctx.Config.CronDanmuList, oldconfig.CronDanmuList) {\r\n\t\tlogx.Info(\"识别到定时弹幕配置发生变化，重新加载\")\r\n\t\tfor _, i := range ws.corndanmu.Entries() {\r\n\t\t\tws.corndanmu.Remove(i.ID)\r\n\t\t}\r\n\t\tws.corndanmuStart()\r\n\t}\r\n\treturn nil\r\n}\r\n\r\ntype WsHandler interface {\r\n\tStartWsClient() error\r\n\tStopWsClient()\r\n\tSayGoodbye()\r\n\tstarthttp() error\r\n\tReloadConfig() error\r\n\tGetSvc() svc.ServiceContext\r\n\tGetUserinfo() *entity.UserinfoLite\r\n}\r\n\r\nfunc (w *wsHandler) StartWsClient() error {\r\n\tw.startLogic()\r\n\tif w.svc.Config.EntryMsg != \"off\" {\r\n\t\terr := http.Send(w.svc.Config.EntryMsg, w.svc)\r\n\t\tif err != nil {\r\n\t\t\tlogx.Error(err)\r\n\t\t}\r\n\t}\r\n\treturn w.client.Start()\r\n}\r\nfunc (w *wsHandler) GetUserinfo() *entity.UserinfoLite {\r\n\treturn http.GetUserInfo()\r\n}\r\nfunc (w *wsHandler) GetSvc() svc.ServiceContext {\r\n\treturn *w.svc\r\n}\r\nfunc (w *wsHandler) StopWsClient() {\r\n\tif w.sendBulletCancel != nil {\r\n\t\tw.sendBulletCancel()\r\n\t}\r\n\tif w.robotBulletCancel != nil {\r\n\t\tw.robotBulletCancel()\r\n\t}\r\n\tif w.thankGiftCancel != nil {\r\n\t\tw.thankGiftCancel()\r\n\t}\r\n\tif w.ineterractCancel != nil {\r\n\t\tw.ineterractCancel() // 关闭弹幕姬goroutine\r\n\t}\r\n\tif w.pkCancel != nil {\r\n\t\tw.pkCancel()\r\n\t}\r\n\tif w.danmuLogicCancel != nil {\r\n\t\tw.danmuLogicCancel()\r\n\t}\r\n\tfor _, i := range w.corndanmu.Entries() {\r\n\t\tw.corndanmu.Remove(i.ID)\r\n\t}\r\n\tw.corndanmu.Stop()\r\n\tw.client.Stop()\r\n\t//w.svc.Db.Db.Close()\r\n}\r\nfunc (w *wsHandler) SayGoodbye() {\r\n\tif len(w.svc.Config.GoodbyeInfo) > 0 {\r\n\r\n\t\tvar danmuLen = w.svc.Config.DanmuLen\r\n\t\tvar msgdata []string\r\n\t\tmsgrun := []rune(w.svc.Config.GoodbyeInfo)\r\n\t\tmsgLen := len(msgrun)\r\n\t\tmsgcount := msgLen / danmuLen\r\n\t\ttmpmsgcount := msgLen % danmuLen\r\n\t\tif tmpmsgcount != 0 {\r\n\t\t\tmsgcount += 1\r\n\t\t}\r\n\t\tfor m := 1; m <= msgcount; m++ {\r\n\t\t\tif msgLen < m*danmuLen {\r\n\t\t\t\tmsgdata = append(msgdata, string(msgrun[(m-1)*danmuLen:msgLen]))\r\n\t\t\t\tcontinue\r\n\t\t\t}\r\n\t\t\tmsgdata = append(msgdata, string(msgrun[(m-1)*danmuLen:danmuLen*m]))\r\n\t\t}\r\n\t\tfor _, msgs := range msgdata {\r\n\t\t\terr := http.Send(msgs, w.svc)\r\n\t\t\tif err != nil {\r\n\t\t\t\tlogx.Errorf(\"下播弹幕发送失败：%s msg: %s\", err, msgs)\r\n\t\t\t}\r\n\t\t\ttime.Sleep(1 * time.Second) // 防止弹幕发送过快\r\n\t\t\t// logx.Info(\">>>>>>>>>\", msgs)\r\n\t\t}\r\n\t}\r\n}\r\nfunc (w *wsHandler) startLogic() {\r\n\tw.sendBulletCtx, w.sendBulletCancel = context.WithCancel(context.Background())\r\n\tgo logic.StartSendBullet(w.sendBulletCtx, w.svc)\r\n\tlogx.Info(\"弹幕推送已开启...\")\r\n\t// 机器人\r\n\tw.robotBulletCtx, w.robotBulletCancel = context.WithCancel(context.Background())\r\n\tgo logic.StartBulletRobot(w.robotBulletCtx, w.svc)\r\n\t// 弹幕逻辑\r\n\tw.danmuLogicCtx, w.danmuLogicCancel = context.WithCancel(context.Background())\r\n\tgo danmu.StartDanmuLogic(w.danmuLogicCtx, w.svc)\r\n\r\n\tlogx.Info(\"弹幕机器人已开启\")\r\n\t// 特效欢迎\r\n\tw.ineterractCtx, w.ineterractCancel = context.WithCancel(context.Background())\r\n\tgo logic.Interact(w.ineterractCtx, w.svc)\r\n\r\n\tlogx.Info(\"欢迎模块已开启\")\r\n\r\n\t// 礼物感谢\r\n\tw.thanksGiftCtx, w.thankGiftCancel = context.WithCancel(context.Background())\r\n\tgo logic.ThanksGift(w.thanksGiftCtx, w.svc)\r\n\r\n\tlogx.Info(\"礼物感谢已开启\")\r\n\t// pk提醒\r\n\tw.pkCtx, w.pkCancel = context.WithCancel(context.Background())\r\n\tgo logic.PK(w.pkCtx, w.svc)\r\n\r\n\t// 下播提醒\r\n\t// w.sayGoodbyeByWs()\r\n\r\n\t//定时弹幕\r\n\tw.corndanmuStart()\r\n\r\n\tw.registerHandler()\r\n}\r\nfunc (w *wsHandler) registerHandler() {\r\n\tw.welcomeEntryEffect()\r\n\tw.welcomeInteractWord()\r\n\tlogx.Info(\"弹幕处理已开启\")\r\n\tw.receiveDanmu()\r\n\t// 天选自动关闭欢迎\r\n\tw.anchorLot()\r\n\tlogx.Info(\"pk提醒已开启\")\r\n\tw.pkBattleStart()\r\n\tw.pkBattleEnd()\r\n\t// 禁言用户提醒\r\n\tw.blockUser()\r\n\tw.thankGifts()\r\n\t// 红包\r\n\tw.redPocket()\r\n}\r\nfunc (w *wsHandler) starthttp() error {\r\n\tvar err error\r\n\thttp.InitHttpClient()\r\n\t// 判断是否存在历史cookie\r\n\tif http.FileExists(\"token/bili_token.txt\") && http.FileExists(\"token/bili_token.json\") {\r\n\t\terr = http.SetHistoryCookie()\r\n\t\tif err != nil {\r\n\t\t\tlogx.Error(\"用户登录失败\")\r\n\t\t\treturn err\r\n\t\t}\r\n\t\tlogx.Info(\"用户登录成功\")\r\n\t} else {\r\n\t\t//if err = w.userlogin(); err != nil {\r\n\t\t//\tlogx.Errorf(\"用户登录失败：%v\", err)\r\n\t\t//\treturn\r\n\t\t//}\r\n\t\t//logx.Info(\"用户登录成功\")\r\n\t\tlogx.Error(\"用户登录失败\")\r\n\t\treturn errors.New(\"用户登录失败\")\r\n\t}\r\n\treturn nil\r\n}\r\nfunc (w *wsHandler) userlogin() error {\r\n\tvar err error\r\n\thttp.InitHttpClient()\r\n\tvar loginUrl *entity.LoginUrl\r\n\tif loginUrl, err = http.GetLoginUrl(); err != nil {\r\n\t\tlogx.Error(err)\r\n\t\treturn err\r\n\t}\r\n\r\n\tif err = utiles.GenerateQr(loginUrl.Data.Url); err != nil {\r\n\t\tlogx.Error(err)\r\n\t\treturn err\r\n\t}\r\n\r\n\tif _, err = http.GetLoginInfo(loginUrl.Data.OauthKey); err != nil {\r\n\t\tlogx.Error(err)\r\n\t\treturn err\r\n\t}\r\n\r\n\treturn err\r\n}\r\nfunc (w *wsHandler) corndanmuStart() {\r\n\tif w.svc.Config.CronDanmu == false {\r\n\t\treturn\r\n\t}\r\n\tfor n, danmux := range w.svc.Config.CronDanmuList {\r\n\t\tif danmux.Danmu != nil {\r\n\t\t\ti := n\r\n\t\t\tdanmus := danmux\r\n\t\t\t_, err := w.corndanmu.AddFunc(danmus.Cron, func() {\r\n\t\t\t\tif len(danmus.Danmu) > 0 {\r\n\t\t\t\t\tif danmus.Random {\r\n\t\t\t\t\t\tlogic.PushToBulletSender(danmus.Danmu[rand.Intn(len(danmus.Danmu))])\r\n\t\t\t\t\t} else {\r\n\t\t\t\t\t\t_, ok := w.mapCronDanmuSendIdx[i]\r\n\t\t\t\t\t\tif !ok {\r\n\t\t\t\t\t\t\tw.mapCronDanmuSendIdx[i] = 0\r\n\t\t\t\t\t\t}\r\n\t\t\t\t\t\tw.mapCronDanmuSendIdx[i] = w.mapCronDanmuSendIdx[i] + 1\r\n\t\t\t\t\t\tlogic.PushToBulletSender(danmus.Danmu[w.mapCronDanmuSendIdx[i]%len(danmus.Danmu)])\r\n\t\t\t\t\t}\r\n\t\t\t\t}\r\n\t\t\t})\r\n\t\t\tif err != nil {\r\n\t\t\t\tlogx.Errorf(\"第%d条定时弹幕配置出现错误: %v\", i+1, err)\r\n\t\t\t}\r\n\t\t}\r\n\t}\r\n\tw.corndanmu.Start()\r\n}\r\nfunc mustloadConfig() (*svc.ServiceContext, error) {\r\n\tdir := \"./token\"\r\n\tif _, err := os.Stat(dir); os.IsNotExist(err) {\r\n\t\t// Directory does not exist, create it\r\n\t\terr = os.Mkdir(dir, 0755)\r\n\t\tif err != nil {\r\n\t\t\tpanic(fmt.Sprintf(\"无法创建token文件夹 请手动创建:%s\", err))\r\n\t\t}\r\n\t}\r\n\r\n\tvar c config.Config\r\n\tconf.MustLoad(\"etc/bilidanmaku-api.yaml\", &c, conf.UseEnv())\r\n\tlogx.MustSetup(c.Log)\r\n\tlogx.DisableStat()\r\n\t//配置数据库文件夹\r\n\tinfo, err := os.Stat(c.DBPath)\r\n\tif os.IsNotExist(err) || !info.IsDir() {\r\n\t\terr = os.MkdirAll(c.DBPath, 0777)\r\n\t\tif err != nil {\r\n\t\t\tlogx.Errorf(\"文件夹创建失败：%s\", c.DBPath)\r\n\t\t\treturn nil, err\r\n\t\t}\r\n\t}\r\n\tctx := svc.NewServiceContext(c)\r\n\treturn ctx, err\r\n}\r\n\r\n// 比较两个 Person 切片是否相同\r\nfunc areSlicesEqual(a, b []config.CronDanmuList) bool {\r\n\tif len(a) != len(b) {\r\n\t\treturn false\r\n\t}\r\n\r\n\tfor i := range a {\r\n\t\tif !reflect.DeepEqual(a[i], b[i]) {\r\n\t\t\treturn false\r\n\t\t}\r\n\t}\r\n\r\n\treturn true\r\n}\r\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/handler/base.go b/handler/base.go
+--- a/handler/base.go	(revision cb5aa32aeb889396ad5e3449c0f4f4dcba5e4ad1)
++++ b/handler/base.go	(date 1751467193748)
+@@ -49,6 +49,7 @@
+ 	corndanmu           *cron.Cron
+ 	mapCronDanmuSendIdx map[int]int
+ 	userId              int
++	initStart           bool
+ }
+ 
+ func NewWsHandler() WsHandler {
+@@ -57,6 +58,7 @@
+ 		return nil
+ 	}
+ 	ws := new(wsHandler)
++	ws.initStart = false
+ 	err = ws.starthttp()
+ 	if err != nil {
+ 		logx.Error(err)
+@@ -122,23 +124,31 @@
+ }
+ 
+ type WsHandler interface {
+-	StartWsClient() error
++	InitStartWsClient()
+ 	StopWsClient()
+ 	SayGoodbye()
++	StopChanel()
++	StartWsClient() error
+ 	starthttp() error
+ 	ReloadConfig() error
+ 	GetSvc() svc.ServiceContext
+ 	GetUserinfo() *entity.UserinfoLite
+ }
+ 
+-func (w *wsHandler) StartWsClient() error {
++func (w *wsHandler) InitStartWsClient() {
+ 	w.startLogic()
++}
++func (w *wsHandler) StartWsClient() error {
+ 	if w.svc.Config.EntryMsg != "off" {
+ 		err := http.Send(w.svc.Config.EntryMsg, w.svc)
+ 		if err != nil {
+ 			logx.Error(err)
+ 		}
+ 	}
++	w.corndanmu.Start()
++	w.client = client.NewClient(w.svc.Config.RoomId)
++	w.client.SetCookie(http.CookieStr)
++	w.registerHandler()
+ 	return w.client.Start()
+ }
+ func (w *wsHandler) GetUserinfo() *entity.UserinfoLite {
+@@ -148,6 +158,11 @@
+ 	return *w.svc
+ }
+ func (w *wsHandler) StopWsClient() {
++	w.corndanmu.Stop()
++	w.client.Stop()
++	//w.svc.Db.Db.Close()
++}
++func (w *wsHandler) StopChanel() {
+ 	if w.sendBulletCancel != nil {
+ 		w.sendBulletCancel()
+ 	}
+@@ -169,9 +184,6 @@
+ 	for _, i := range w.corndanmu.Entries() {
+ 		w.corndanmu.Remove(i.ID)
+ 	}
+-	w.corndanmu.Stop()
+-	w.client.Stop()
+-	//w.svc.Db.Db.Close()
+ }
+ func (w *wsHandler) SayGoodbye() {
+ 	if len(w.svc.Config.GoodbyeInfo) > 0 {
+@@ -235,7 +247,7 @@
+ 	//定时弹幕
+ 	w.corndanmuStart()
+ 
+-	w.registerHandler()
++	//w.registerHandler()
+ }
+ func (w *wsHandler) registerHandler() {
+ 	w.welcomeEntryEffect()
+Index: logic/danmu/robot.go
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>package danmu\r\n\r\nimport (\r\n\t\"fmt\"\r\n\t\"github.com/xbclub/BilibiliDanmuRobot-Core/entity\"\r\n\t\"github.com/xbclub/BilibiliDanmuRobot-Core/logic\"\r\n\t\"github.com/xbclub/BilibiliDanmuRobot-Core/svc\"\r\n\t\"strings\"\r\n)\r\n\r\nconst (\r\n\tnone int = iota\r\n\tcontained\r\n\thasPrefix\r\n)\r\n\r\nfunc DoDanmuProcess(msg string, svcCtx *svc.ServiceContext, reply ...*entity.DanmuMsgTextReplyInfo) {\r\n\t// @帮助 打出来关键词\r\n\tif strings.Compare(\"@帮助\", msg) == 0 {\r\n\t\ts := \"\"\r\n\t\tif len(svcCtx.Config.TalkRobotCmd) > 0 {\r\n\t\t\ts = fmt.Sprintf(\"发送带有 %s 的弹幕和我互动\", svcCtx.Config.TalkRobotCmd)\r\n\t\t\tlogic.PushToBulletSender(s)\r\n\t\t\tlogic.PushToBulletSender(\"请尽情调戏我吧!\")\r\n\t\t} else {\r\n\t\t\ts = \"互动聊天已禁用...\"\r\n\t\t\tlogic.PushToBulletSender(s)\r\n\t\t}\r\n\t\t//logic.PushToBulletSender(\" \")\r\n\t\t// logx.Info(s)\r\n\t\tlogic.PushToBulletSender(\"发送「签到/打卡」即可签到\")\r\n\t\tlogic.PushToBulletSender(\"发送「查询弹幕」查询自己近三天的弹幕数\")\r\n\t\tlogic.PushToBulletSender(\"发送「X月盲盒」查询在本直播间的盲盒盈亏\")\r\n\t\tlogic.PushToBulletSender(\"发送「抽签」即可抽签\")\r\n\t\tlogic.PushToBulletSender(\"主播发送「关闭欢迎弹幕」即可关闭欢迎弹幕\")\r\n\t\tlogic.PushToBulletSender(\"主播发送「开启欢迎弹幕」即可开启欢迎弹幕\")\r\n\t}\r\n\r\n\tresult := checkIsAtMe(&msg, svcCtx)\r\n\tif result == none {\r\n\t\treturn\r\n\t}\r\n\tcontent := \"\"\r\n\tif result == contained {\r\n\t\tcontent = strings.ReplaceAll(msg, svcCtx.Config.TalkRobotCmd, \"\")\r\n\t} else if result == hasPrefix {\r\n\t\tcontent = strings.TrimPrefix(msg, svcCtx.Config.TalkRobotCmd)\r\n\t}\r\n\t//如果发现弹幕在@我，那么调用机器人进行回复\r\n\tif len(content) > 0 && len(svcCtx.Config.TalkRobotCmd) > 0 && msg != svcCtx.Config.EntryMsg {\r\n\t\tlogic.PushToBulletRobot(content, reply...)\r\n\t}\r\n}\r\n\r\n// 检查弹幕是否在@我，返回bool和@我要说的内容\r\nfunc checkIsAtMe(msg *string, svcCtx *svc.ServiceContext) int {\r\n\tif strings.Contains(*msg, svcCtx.Config.TalkRobotCmd) && svcCtx.Config.FuzzyMatchCmd {\r\n\t\treturn contained\r\n\t} else if strings.HasPrefix(*msg, svcCtx.Config.TalkRobotCmd) {\r\n\t\treturn hasPrefix\r\n\t} else {\r\n\t\treturn none\r\n\t}\r\n}\r\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/logic/danmu/robot.go b/logic/danmu/robot.go
+--- a/logic/danmu/robot.go	(revision cb5aa32aeb889396ad5e3449c0f4f4dcba5e4ad1)
++++ b/logic/danmu/robot.go	(date 1751467193750)
+@@ -34,6 +34,10 @@
+ 		logic.PushToBulletSender("发送「抽签」即可抽签")
+ 		logic.PushToBulletSender("主播发送「关闭欢迎弹幕」即可关闭欢迎弹幕")
+ 		logic.PushToBulletSender("主播发送「开启欢迎弹幕」即可开启欢迎弹幕")
++		logic.PushToBulletSender("本软件为永久免费软件")
++	}
++	if strings.Compare("@我是谁", msg) == 0 {
++		logic.PushToBulletSender("本程序作者为@超凶一只花酱酱")
+ 	}
+ 
+ 	result := checkIsAtMe(&msg, svcCtx)
+Index: go.mod
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>module github.com/xbclub/BilibiliDanmuRobot-Core\r\n\r\ngo 1.21.1\r\n\r\nrequire (\r\n\tgithub.com/andybalholm/brotli v1.0.5\r\n\tgithub.com/avast/retry-go/v4 v4.5.0\r\n\tgithub.com/glebarez/go-sqlite v1.21.2\r\n\tgithub.com/glebarez/sqlite v1.10.0\r\n\tgithub.com/go-resty/resty/v2 v2.9.1\r\n\tgithub.com/golang-module/carbon/v2 v2.2.11\r\n\tgithub.com/gorilla/websocket v1.5.0\r\n\tgithub.com/robfig/cron/v3 v3.0.1\r\n\tgithub.com/sashabaranov/go-openai v1.24.1\r\n\tgithub.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e\r\n\tgithub.com/tidwall/gjson v1.16.0\r\n\tgithub.com/zeromicro/go-zero v1.5.6\r\n\tgoogle.golang.org/protobuf v1.31.0\r\n\tgopkg.in/yaml.v3 v3.0.1\r\n\tgorm.io/gorm v1.25.5\r\n)\r\n\r\nrequire (\r\n\tgithub.com/cenkalti/backoff/v4 v4.2.0 // indirect\r\n\tgithub.com/dustin/go-humanize v1.0.1 // indirect\r\n\tgithub.com/fatih/color v1.15.0 // indirect\r\n\tgithub.com/go-logr/logr v1.2.3 // indirect\r\n\tgithub.com/go-logr/stdr v1.2.2 // indirect\r\n\tgithub.com/golang/protobuf v1.5.3 // indirect\r\n\tgithub.com/google/uuid v1.3.1 // indirect\r\n\tgithub.com/grpc-ecosystem/grpc-gateway/v2 v2.15.0 // indirect\r\n\tgithub.com/jinzhu/inflection v1.0.0 // indirect\r\n\tgithub.com/jinzhu/now v1.1.5 // indirect\r\n\tgithub.com/mattn/go-colorable v0.1.13 // indirect\r\n\tgithub.com/mattn/go-isatty v0.0.17 // indirect\r\n\tgithub.com/openzipkin/zipkin-go v0.4.1 // indirect\r\n\tgithub.com/pelletier/go-toml/v2 v2.1.0 // indirect\r\n\tgithub.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect\r\n\tgithub.com/spaolacci/murmur3 v1.1.0 // indirect\r\n\tgithub.com/tidwall/match v1.1.1 // indirect\r\n\tgithub.com/tidwall/pretty v1.2.1 // indirect\r\n\tgo.opentelemetry.io/otel v1.14.0 // indirect\r\n\tgo.opentelemetry.io/otel/exporters/jaeger v1.14.0 // indirect\r\n\tgo.opentelemetry.io/otel/exporters/otlp/internal/retry v1.14.0 // indirect\r\n\tgo.opentelemetry.io/otel/exporters/otlp/otlptrace v1.14.0 // indirect\r\n\tgo.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.14.0 // indirect\r\n\tgo.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.14.0 // indirect\r\n\tgo.opentelemetry.io/otel/exporters/stdout/stdouttrace v1.14.0 // indirect\r\n\tgo.opentelemetry.io/otel/exporters/zipkin v1.14.0 // indirect\r\n\tgo.opentelemetry.io/otel/sdk v1.14.0 // indirect\r\n\tgo.opentelemetry.io/otel/trace v1.14.0 // indirect\r\n\tgo.opentelemetry.io/proto/otlp v0.19.0 // indirect\r\n\tgo.uber.org/automaxprocs v1.5.3 // indirect\r\n\tgolang.org/x/net v0.15.0 // indirect\r\n\tgolang.org/x/sys v0.12.0 // indirect\r\n\tgolang.org/x/text v0.13.0 // indirect\r\n\tgoogle.golang.org/genproto v0.0.0-20230803162519-f966b187b2e5 // indirect\r\n\tgoogle.golang.org/genproto/googleapis/api v0.0.0-20230726155614-23370e0ffb3e // indirect\r\n\tgoogle.golang.org/genproto/googleapis/rpc v0.0.0-20230913181813-007df8e322eb // indirect\r\n\tgoogle.golang.org/grpc v1.58.2 // indirect\r\n\tgopkg.in/yaml.v2 v2.4.0 // indirect\r\n\tmodernc.org/libc v1.22.5 // indirect\r\n\tmodernc.org/mathutil v1.5.0 // indirect\r\n\tmodernc.org/memory v1.5.0 // indirect\r\n\tmodernc.org/sqlite v1.23.1 // indirect\r\n)\r\n\r\nreplace github.com/xbclub/BilibiliDanmuRobot-Core => github.com/teaPartyovo/BilibiliDanmuRobot-Core v1.2.17\r\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/go.mod b/go.mod
+--- a/go.mod	(revision cb5aa32aeb889396ad5e3449c0f4f4dcba5e4ad1)
++++ b/go.mod	(date 1751467193747)
+@@ -1,6 +1,6 @@
+ module github.com/xbclub/BilibiliDanmuRobot-Core
+ 
+-go 1.21.1
++go 1.24
+ 
+ require (
+ 	github.com/andybalholm/brotli v1.0.5
+Index: .idea/workspace.xml
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+><?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n<project version=\"4\">\r\n  <component name=\"AutoImportSettings\">\r\n    <option name=\"autoReloadType\" value=\"ALL\" />\r\n  </component>\r\n  <component name=\"ChangeListManager\">\r\n    <list default=\"true\" id=\"b28bdfe3-72f1-40c5-8f3d-7d6f029985d6\" name=\"Changes\" comment=\"新增具体某日统计功能\" />\r\n    <option name=\"SHOW_DIALOG\" value=\"false\" />\r\n    <option name=\"HIGHLIGHT_CONFLICTS\" value=\"true\" />\r\n    <option name=\"HIGHLIGHT_NON_ACTIVE_CHANGELIST\" value=\"false\" />\r\n    <option name=\"LAST_RESOLUTION\" value=\"IGNORE\" />\r\n  </component>\r\n  <component name=\"GOROOT\" url=\"file://$PROJECT_DIR$/../../go\" />\r\n  <component name=\"Git.Settings\">\r\n    <option name=\"PUSH_TAGS\">\r\n      <GitPushTagMode>\r\n        <option name=\"argument\" value=\"--tags\" />\r\n        <option name=\"title\" value=\"All\" />\r\n      </GitPushTagMode>\r\n    </option>\r\n    <option name=\"RECENT_GIT_ROOT_PATH\" value=\"$PROJECT_DIR$\" />\r\n  </component>\r\n  <component name=\"ProjectColorInfo\">{\r\n  &quot;associatedIndex&quot;: 1\r\n}</component>\r\n  <component name=\"ProjectId\" id=\"2ufKDSOwGuRSdNSWpHPMZGuWwsk\" />\r\n  <component name=\"ProjectLevelVcsManager\" settingsEditedManually=\"true\" />\r\n  <component name=\"ProjectViewState\">\r\n    <option name=\"showLibraryContents\" value=\"true\" />\r\n  </component>\r\n  <component name=\"PropertiesComponent\">{\r\n  &quot;keyToString&quot;: {\r\n    &quot;Go Build.go build github.com/xbclub/BilibiliDanmuRobot-Core/test.executor&quot;: &quot;Run&quot;,\r\n    &quot;Go Build.go build test.go.executor&quot;: &quot;Run&quot;,\r\n    &quot;Go Test.TestDoBlindBoxStat in github.com/xbclub/BilibiliDanmuRobot-Core/logic/danmu.executor&quot;: &quot;Run&quot;,\r\n    &quot;Go Test.blindBoxStat_test.go.executor&quot;: &quot;Run&quot;,\r\n    &quot;Go Test.blindbox_test.go.executor&quot;: &quot;Run&quot;,\r\n    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,\r\n    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,\r\n    &quot;RunOnceActivity.go.formatter.settings.were.checked&quot;: &quot;true&quot;,\r\n    &quot;RunOnceActivity.go.migrated.go.modules.settings&quot;: &quot;true&quot;,\r\n    &quot;RunOnceActivity.go.modules.go.list.on.any.changes.was.set&quot;: &quot;true&quot;,\r\n    &quot;git-widget-placeholder&quot;: &quot;main&quot;,\r\n    &quot;go.import.settings.migrated&quot;: &quot;true&quot;,\r\n    &quot;go.sdk.automatically.set&quot;: &quot;true&quot;,\r\n    &quot;last_opened_file_path&quot;: &quot;D:/go_code/robotCore&quot;,\r\n    &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,\r\n    &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,\r\n    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,\r\n    &quot;settings.editor.selected.configurable&quot;: &quot;preferences.language.and.region&quot;\r\n  }\r\n}</component>\r\n  <component name=\"RunManager\" selected=\"Go Test.blindbox_test.go\">\r\n    <configuration name=\"go build github.com/xbclub/BilibiliDanmuRobot-Core/test\" type=\"GoApplicationRunConfiguration\" factoryName=\"Go Application\" temporary=\"true\" nameIsGenerated=\"true\">\r\n      <module name=\"robotCore\" />\r\n      <working_directory value=\"$PROJECT_DIR$\" />\r\n      <kind value=\"PACKAGE\" />\r\n      <package value=\"github.com/xbclub/BilibiliDanmuRobot-Core/test\" />\r\n      <directory value=\"$PROJECT_DIR$\" />\r\n      <filePath value=\"$PROJECT_DIR$/test/test.go\" />\r\n      <method v=\"2\" />\r\n    </configuration>\r\n    <configuration name=\"go build test.go\" type=\"GoApplicationRunConfiguration\" factoryName=\"Go Application\" temporary=\"true\" nameIsGenerated=\"true\">\r\n      <module name=\"robotCore\" />\r\n      <working_directory value=\"$PROJECT_DIR$\" />\r\n      <kind value=\"FILE\" />\r\n      <package value=\"github.com/xbclub/BilibiliDanmuRobot-Core\" />\r\n      <directory value=\"$PROJECT_DIR$\" />\r\n      <filePath value=\"$PROJECT_DIR$/test/test.go\" />\r\n      <method v=\"2\" />\r\n    </configuration>\r\n    <configuration name=\"TestDoBlindBoxStat in github.com/xbclub/BilibiliDanmuRobot-Core/logic/danmu\" type=\"GoTestRunConfiguration\" factoryName=\"Go Test\" temporary=\"true\" nameIsGenerated=\"true\">\r\n      <module name=\"robotCore\" />\r\n      <working_directory value=\"$PROJECT_DIR$/logic/danmu\" />\r\n      <root_directory value=\"$PROJECT_DIR$\" />\r\n      <kind value=\"PACKAGE\" />\r\n      <package value=\"github.com/xbclub/BilibiliDanmuRobot-Core/logic/danmu\" />\r\n      <directory value=\"$PROJECT_DIR$\" />\r\n      <filePath value=\"$PROJECT_DIR$\" />\r\n      <framework value=\"gotest\" />\r\n      <pattern value=\"^\\QTestDoBlindBoxStat\\E$\" />\r\n      <method v=\"2\" />\r\n    </configuration>\r\n    <configuration name=\"blindBoxStat_test.go\" type=\"GoTestRunConfiguration\" factoryName=\"Go Test\" temporary=\"true\" nameIsGenerated=\"true\">\r\n      <module name=\"robotCore\" />\r\n      <working_directory value=\"$PROJECT_DIR$/logic/danmu\" />\r\n      <root_directory value=\"$PROJECT_DIR$\" />\r\n      <kind value=\"FILE\" />\r\n      <directory value=\"$PROJECT_DIR$\" />\r\n      <filePath value=\"$PROJECT_DIR$/logic/danmu/blindBoxStat_test.go\" />\r\n      <framework value=\"gotest\" />\r\n      <method v=\"2\" />\r\n    </configuration>\r\n    <configuration name=\"blindbox_test.go\" type=\"GoTestRunConfiguration\" factoryName=\"Go Test\" temporary=\"true\" nameIsGenerated=\"true\">\r\n      <module name=\"robotCore\" />\r\n      <working_directory value=\"$PROJECT_DIR$/test\" />\r\n      <root_directory value=\"$PROJECT_DIR$\" />\r\n      <kind value=\"FILE\" />\r\n      <directory value=\"$PROJECT_DIR$\" />\r\n      <filePath value=\"$PROJECT_DIR$/test/blindbox_test.go\" />\r\n      <framework value=\"gotest\" />\r\n      <method v=\"2\" />\r\n    </configuration>\r\n    <recent_temporary>\r\n      <list>\r\n        <item itemvalue=\"Go Test.blindbox_test.go\" />\r\n        <item itemvalue=\"Go Build.go build test.go\" />\r\n        <item itemvalue=\"Go Build.go build github.com/xbclub/BilibiliDanmuRobot-Core/test\" />\r\n        <item itemvalue=\"Go Test.blindBoxStat_test.go\" />\r\n        <item itemvalue=\"Go Test.TestDoBlindBoxStat in github.com/xbclub/BilibiliDanmuRobot-Core/logic/danmu\" />\r\n      </list>\r\n    </recent_temporary>\r\n  </component>\r\n  <component name=\"SharedIndexes\">\r\n    <attachedChunks>\r\n      <set>\r\n        <option value=\"bundled-gosdk-d297c17c1fbd-57c114c3cede-org.jetbrains.plugins.go.sharedIndexes.bundled-GO-243.26053.20\" />\r\n        <option value=\"bundled-js-predefined-d6986cc7102b-1632447f56bf-JavaScript-GO-243.26053.20\" />\r\n      </set>\r\n    </attachedChunks>\r\n  </component>\r\n  <component name=\"SpellCheckerSettings\" RuntimeDictionaries=\"0\" Folders=\"0\" CustomDictionaries=\"0\" DefaultDictionary=\"application-level\" UseSingleDictionary=\"true\" transferred=\"true\" />\r\n  <component name=\"TypeScriptGeneratedFilesManager\">\r\n    <option name=\"version\" value=\"3\" />\r\n  </component>\r\n  <component name=\"Vcs.Log.Tabs.Properties\">\r\n    <option name=\"TAB_STATES\">\r\n      <map>\r\n        <entry key=\"MAIN\">\r\n          <value>\r\n            <State />\r\n          </value>\r\n        </entry>\r\n      </map>\r\n    </option>\r\n  </component>\r\n  <component name=\"VcsManagerConfiguration\">\r\n    <MESSAGE value=\"1\" />\r\n    <MESSAGE value=\"新增具体盲盒统计功能\" />\r\n    <MESSAGE value=\"新增具体某日统计功能\" />\r\n    <option name=\"LAST_COMMIT_MESSAGE\" value=\"新增具体某日统计功能\" />\r\n  </component>\r\n  <component name=\"VgoProject\">\r\n    <settings-migrated>true</settings-migrated>\r\n  </component>\r\n</project>
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/.idea/workspace.xml b/.idea/workspace.xml
+--- a/.idea/workspace.xml	(revision cb5aa32aeb889396ad5e3449c0f4f4dcba5e4ad1)
++++ b/.idea/workspace.xml	(date 1751469085098)
+@@ -4,7 +4,9 @@
+     <option name="autoReloadType" value="ALL" />
+   </component>
+   <component name="ChangeListManager">
+-    <list default="true" id="b28bdfe3-72f1-40c5-8f3d-7d6f029985d6" name="Changes" comment="新增具体某日统计功能" />
++    <list default="true" id="b28bdfe3-72f1-40c5-8f3d-7d6f029985d6" name="Changes" comment="新增具体某日统计功能">
++      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
++    </list>
+     <option name="SHOW_DIALOG" value="false" />
+     <option name="HIGHLIGHT_CONFLICTS" value="true" />
+     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+@@ -12,6 +14,7 @@
+   </component>
+   <component name="GOROOT" url="file://$PROJECT_DIR$/../../go" />
+   <component name="Git.Settings">
++    <option name="PUSH_AUTO_UPDATE" value="true" />
+     <option name="PUSH_TAGS">
+       <GitPushTagMode>
+         <option name="argument" value="--tags" />
+@@ -19,6 +22,7 @@
+       </GitPushTagMode>
+     </option>
+     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
++    <option name="ROOT_SYNC" value="SYNC" />
+   </component>
+   <component name="ProjectColorInfo">{
+   &quot;associatedIndex&quot;: 1
+@@ -128,7 +132,19 @@
+       <map>
+         <entry key="MAIN">
+           <value>
+-            <State />
++            <State>
++              <option name="FILTERS">
++                <map>
++                  <entry key="branch">
++                    <value>
++                      <list>
++                        <option value="origin/main" />
++                      </list>
++                    </value>
++                  </entry>
++                </map>
++              </option>
++            </State>
+           </value>
+         </entry>
+       </map>
+Index: test/test.go
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>package main\r\n\r\nimport (\r\n\t\"encoding/json\"\r\n\t\"fmt\"\r\n\t\"github.com/xbclub/BilibiliDanmuRobot-Core/config\"\r\n\t\"github.com/xbclub/BilibiliDanmuRobot-Core/handler\"\r\n\t\"github.com/zeromicro/go-zero/core/logx\"\r\n\t\"gopkg.in/yaml.v3\"\r\n\t\"os\"\r\n\t\"time\"\r\n)\r\n\r\nfunc main() {\r\n\tcls := handler.NewWsHandler()\r\n\r\n\tif cls != nil {\r\n\t\tcls.StartWsClient()\r\n\t} else {\r\n\t\tfmt.Println(\"cls is nil\")\r\n\t}\r\n\tfmt.Println(cls.GetUserinfo())\r\n\r\n\t//http.HttpTest()\r\n\tx := cls.GetSvc()\r\n\tz := *x.Config\r\n\tz.SignInEnable = false\r\n\tz.RoomId = 4699397\r\n\tz.CronDanmu = false\r\n\tmarshal, err := json.Marshal(z)\r\n\tif err != nil {\r\n\t\treturn\r\n\t}\r\n\tWriteConfig(string(marshal))\r\n\tcls.ReloadConfig()\r\n\tfmt.Println(cls.GetSvc().Config.RoomId)\r\n\t//fmt.Println(cls.GetUserinfo())\r\n\ttime.Sleep(20 * time.Second)\r\n\tz.SignInEnable = true\r\n\tmarshal, err = json.Marshal(z)\r\n\tif err != nil {\r\n\t\treturn\r\n\t}\r\n\tWriteConfig(string(marshal))\r\n\tcls.ReloadConfig()\r\n\t//time.Sleep(15 * time.Second)\r\n\t//cls.StopWsClient()\r\n\tselect {}\r\n}\r\nfunc WriteConfig(data string) *ConfigResponse {\r\n\tvar c config.Config\r\n\tresp := new(ConfigResponse)\r\n\terr := json.Unmarshal([]byte(data), &c)\r\n\tif err != nil {\r\n\t\tlogx.Error(err)\r\n\t\tresp.Code = false\r\n\t\tresp.Msg = err.Error()\r\n\t\treturn resp\r\n\t}\r\n\tyamlBytes, err := yaml.Marshal(&c)\r\n\tif err != nil {\r\n\t\tlogx.Error(\"Failed to marshal YAML: %v\", err)\r\n\t\tresp.Code = false\r\n\t\tresp.Msg = err.Error()\r\n\t\treturn resp\r\n\t}\r\n\tif _, err = os.Stat(\"./etc\"); os.IsNotExist(err) {\r\n\t\t// Directory does not exist, create it\r\n\t\terr = os.Mkdir(\"./etc\", 0755)\r\n\t\tif err != nil {\r\n\t\t\tlogx.Error(err)\r\n\t\t\tresp.Code = false\r\n\t\t\tresp.Msg = err.Error()\r\n\t\t\treturn resp\r\n\t\t}\r\n\t}\r\n\tfile, err := os.OpenFile(\"etc/bilidanmaku-api.yaml\", os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0666)\r\n\tif err != nil {\r\n\t\tlogx.Errorf(\"打开文件错误：\", err)\r\n\t\tresp.Code = false\r\n\t\tresp.Msg = \"打开文件错误：\" + err.Error()\r\n\t\treturn resp\r\n\t}\r\n\t_, err = file.Write(yamlBytes)\r\n\tif err != nil {\r\n\t\tlogx.Errorf(\"文件写入错误：\", err)\r\n\t\tresp.Code = false\r\n\t\tresp.Msg = \"文件写入错误：\" + err.Error()\r\n\t\treturn resp\r\n\t}\r\n\tfile.Close()\r\n\r\n\t//err = Mustload(&c)\r\n\t//if err != nil {\r\n\t//\tlogx.Error(err)\r\n\t//\tresp.Code = false\r\n\t//\tresp.Msg = err.Error()\r\n\t//\treturn resp\r\n\t//}\r\n\tresp.Code = true\r\n\treturn resp\r\n}\r\n\r\ntype ConfigResponse struct {\r\n\tCode bool\r\n\tMsg  string\r\n\tForm config.Config\r\n}\r\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/test/test.go b/test/test.go
+--- a/test/test.go	(revision cb5aa32aeb889396ad5e3449c0f4f4dcba5e4ad1)
++++ b/test/test.go	(date 1751467193751)
+@@ -15,7 +15,7 @@
+ 	cls := handler.NewWsHandler()
+ 
+ 	if cls != nil {
+-		cls.StartWsClient()
++		cls.InitStartWsClient()
+ 	} else {
+ 		fmt.Println("cls is nil")
+ 	}
+Index: blivedm-go/client/client.go
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>package client\r\n\r\nimport (\r\n\t\"context\"\r\n\t\"errors\"\r\n\t\"fmt\"\r\n\tlog \"github.com/zeromicro/go-zero/core/logx\"\r\n\t\"net/http\"\r\n\t\"regexp\"\r\n\t\"strings\"\r\n\t\"sync\"\r\n\t\"time\"\r\n\r\n\t\"github.com/gorilla/websocket\"\r\n\t\"github.com/xbclub/BilibiliDanmuRobot-Core/blivedm-go/api\"\r\n\t\"github.com/xbclub/BilibiliDanmuRobot-Core/blivedm-go/packet\"\r\n)\r\n\r\ntype Client struct {\r\n\tconn                *websocket.Conn\r\n\tRoomID              int\r\n\tUid                 int\r\n\tBuvid               string\r\n\tCookie              string\r\n\tWbiMixinKey         string\r\n\ttoken               string\r\n\thost                string\r\n\thostList            []string\r\n\tretryCount          int\r\n\teventHandlers       *eventHandlers\r\n\tcustomEventHandlers *customEventHandlers\r\n\tcancel              context.CancelFunc\r\n\tdone                <-chan struct{}\r\n\tlock                sync.RWMutex\r\n}\r\n\r\n// NewClient 创建一个新的弹幕 client\r\nfunc NewClient(roomID int) *Client {\r\n\tctx, cancel := context.WithCancel(context.Background())\r\n\treturn &Client{\r\n\t\tRoomID:              roomID,\r\n\t\tretryCount:          0,\r\n\t\teventHandlers:       &eventHandlers{},\r\n\t\tcustomEventHandlers: &customEventHandlers{},\r\n\t\tdone:                ctx.Done(),\r\n\t\tcancel:              cancel,\r\n\t\tlock:                sync.RWMutex{},\r\n\t}\r\n}\r\n\r\nfunc (c *Client) SetCookie(cookie string) {\r\n\tc.Cookie = cookie\r\n}\r\n\r\n// init 初始化 获取真实 RoomID 和 弹幕服务器 host\r\nfunc (c *Client) init() error {\r\n\tif c.Cookie != \"\" {\r\n\t\tif !strings.Contains(c.Cookie, \"bili_jct\") || !strings.Contains(c.Cookie, \"SESSDATA\") {\r\n\t\t\tlog.Errorf(\"cannot found account token\")\r\n\t\t\treturn errors.New(\"账号未登录\")\r\n\t\t}\r\n\t\tuid, wbiMixinKey, err := api.GetUid(c.Cookie)\r\n\t\tif err != nil {\r\n\t\t\tlog.Error(err)\r\n\t\t}\r\n\t\tc.Uid = uid\r\n\t\tc.WbiMixinKey = wbiMixinKey\r\n\t\tre := regexp.MustCompile(\"_uuid=(.+?);\")\r\n\t\tresult := re.FindAllStringSubmatch(c.Cookie, -1)\r\n\t\tif len(result) > 0 {\r\n\t\t\tc.Buvid = result[0][1]\r\n\t\t}\r\n\t}\r\n\troomInfo, err := api.GetRoomInfo(c.RoomID)\r\n\t// 失败降级\r\n\tif err != nil || roomInfo.Code != 0 {\r\n\t\tlog.Errorf(\"room=%s init GetRoomInfo fialed, %s\", c.RoomID, err)\r\n\t}\r\n\tc.RoomID = roomInfo.Data.RoomId\r\n\tif c.host == \"\" {\r\n\t\tinfo, err := api.GetDanmuInfo(c.RoomID, c.Cookie, c.WbiMixinKey)\r\n\t\tif err != nil || info == nil || info.Data.HostList == nil {\r\n\t\t\tc.hostList = []string{\"broadcastlv.chat.bilibili.com\"}\r\n\t\t} else {\r\n\t\t\tfor _, h := range info.Data.HostList {\r\n\t\t\t\tc.hostList = append(c.hostList, h.Host)\r\n\t\t\t}\r\n\t\t}\r\n\t\tc.token = info.Data.Token\r\n\t}\r\n\treturn nil\r\n}\r\n\r\nfunc (c *Client) connect() error {\r\n\treqHeader := &http.Header{}\r\n\treqHeader.Set(\"User-Agent\", \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/102.0.0.0 Safari/537.36\")\r\nretry:\r\n\tc.host = c.hostList[c.retryCount%len(c.hostList)]\r\n\tc.retryCount++\r\n\tconn, res, err := websocket.DefaultDialer.Dial(fmt.Sprintf(\"wss://%s/sub\", c.host), *reqHeader)\r\n\tif err != nil {\r\n\t\tlog.Errorf(\"connect dial failed, retry %d times\", c.retryCount)\r\n\t\ttime.Sleep(2 * time.Second)\r\n\t\tgoto retry\r\n\t}\r\n\tc.conn = conn\r\n\t_ = res.Body.Close()\r\n\tif err = c.sendEnterPacket(); err != nil {\r\n\t\tlog.Errorf(\"failed to send enter packet, retry %d times\", c.retryCount)\r\n\t\ttime.Sleep(2 * time.Second)\r\n\t\tgoto retry\r\n\t}\r\n\treturn nil\r\n}\r\n\r\nfunc (c *Client) wsLoop() {\r\n\tfor {\r\n\t\tselect {\r\n\t\tcase <-c.done:\r\n\t\t\tlog.Debug(\"current client closed\")\r\n\t\t\treturn\r\n\t\tdefault:\r\n\t\t\tmsgType, data, err := c.conn.ReadMessage()\r\n\t\t\tif err != nil {\r\n\t\t\t\tlog.Error(\"ws message read failed, reconnecting\")\r\n\t\t\t\ttime.Sleep(time.Duration(3) * time.Millisecond)\r\n\t\t\t\t_ = c.connect()\r\n\t\t\t\tcontinue\r\n\t\t\t}\r\n\t\t\tif msgType != websocket.BinaryMessage {\r\n\t\t\t\tlog.Error(\"packet not binary\")\r\n\t\t\t\tcontinue\r\n\t\t\t}\r\n\t\t\tfor _, pkt := range packet.DecodePacket(data).Parse() {\r\n\t\t\t\tgo c.Handle(pkt)\r\n\t\t\t}\r\n\t\t}\r\n\t}\r\n}\r\n\r\nfunc (c *Client) heartBeatLoop() {\r\n\tpkt := packet.NewHeartBeatPacket()\r\n\tfor {\r\n\t\tselect {\r\n\t\tcase <-c.done:\r\n\t\t\treturn\r\n\t\tcase <-time.After(30 * time.Second):\r\n\t\t\tc.lock.Lock()\r\n\t\t\tif err := c.conn.WriteMessage(websocket.BinaryMessage, pkt); err != nil {\r\n\t\t\t\tlog.Error(err)\r\n\t\t\t}\r\n\t\t\tc.lock.Unlock()\r\n\t\t\tlog.Debug(\"send: HeartBeat\")\r\n\t\t}\r\n\t}\r\n}\r\n\r\n// Start 启动弹幕 Client 初始化并连接 ws、发送心跳包\r\nfunc (c *Client) Start() error {\r\n\tif err := c.init(); err != nil {\r\n\t\treturn err\r\n\t}\r\n\tif err := c.connect(); err != nil {\r\n\t\treturn err\r\n\t}\r\n\tgo c.wsLoop()\r\n\tgo c.heartBeatLoop()\r\n\treturn nil\r\n}\r\n\r\n// Stop 停止弹幕 Client\r\nfunc (c *Client) Stop() {\r\n\tc.cancel()\r\n}\r\n\r\nfunc (c *Client) SetHost(host string) {\r\n\tc.host = host\r\n}\r\n\r\n// UseDefaultHost 使用默认 host broadcastlv.chat.bilibili.com\r\nfunc (c *Client) UseDefaultHost() {\r\n\tc.hostList = []string{\"broadcastlv.chat.bilibili.com\"}\r\n}\r\n\r\nfunc (c *Client) sendEnterPacket() error {\r\n\tpkt := packet.NewEnterPacket(c.Uid, c.Buvid, c.RoomID, c.token)\r\n\tc.lock.Lock()\r\n\tdefer c.lock.Unlock()\r\n\tif err := c.conn.WriteMessage(websocket.BinaryMessage, pkt); err != nil {\r\n\t\treturn err\r\n\t}\r\n\tlog.Debugf(\"send: EnterPacket\")\r\n\treturn nil\r\n}\r\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/blivedm-go/client/client.go b/blivedm-go/client/client.go
+--- a/blivedm-go/client/client.go	(revision cb5aa32aeb889396ad5e3449c0f4f4dcba5e4ad1)
++++ b/blivedm-go/client/client.go	(date 1751467193747)
+@@ -61,7 +61,7 @@
+ 		}
+ 		uid, wbiMixinKey, err := api.GetUid(c.Cookie)
+ 		if err != nil {
+-			log.Error(err)
++			return errors.New(fmt.Sprintf("get uid error: %v", err))
+ 		}
+ 		c.Uid = uid
+ 		c.WbiMixinKey = wbiMixinKey
+@@ -70,16 +70,23 @@
+ 		if len(result) > 0 {
+ 			c.Buvid = result[0][1]
+ 		}
++		b3, _, err := api.GetBuvid3A4()
++		if err != nil {
++			return err
++		}
++		c.Cookie += fmt.Sprintf("buvid3=%s", b3)
+ 	}
++
+ 	roomInfo, err := api.GetRoomInfo(c.RoomID)
+ 	// 失败降级
+ 	if err != nil || roomInfo.Code != 0 {
+-		log.Errorf("room=%s init GetRoomInfo fialed, %s", c.RoomID, err)
++		return errors.New(fmt.Sprintf("room=%s init GetRoomInfo fialed, %s", c.RoomID, err))
+ 	}
+ 	c.RoomID = roomInfo.Data.RoomId
+ 	if c.host == "" {
+ 		info, err := api.GetDanmuInfo(c.RoomID, c.Cookie, c.WbiMixinKey)
+ 		if err != nil || info == nil || info.Data.HostList == nil {
++			log.Errorf("get DanmuInfo error: %v", err)
+ 			c.hostList = []string{"broadcastlv.chat.bilibili.com"}
+ 		} else {
+ 			for _, h := range info.Data.HostList {
+@@ -117,7 +124,6 @@
+ 	for {
+ 		select {
+ 		case <-c.done:
+-			log.Debug("current client closed")
+ 			return
+ 		default:
+ 			msgType, data, err := c.conn.ReadMessage()
+Index: blivedm-go/api/info.go
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>package api\r\n\r\nimport (\r\n\t\"crypto/md5\"\r\n\t\"errors\"\r\n\t\"fmt\"\r\n\t\"github.com/tidwall/gjson\"\r\n\t\"net/http\"\r\n\t\"net/url\"\r\n\t\"regexp\"\r\n\t\"sort\"\r\n\t\"strconv\"\r\n\t\"strings\"\r\n\t\"time\"\r\n)\r\n\r\n// RoomInfo\r\n// api https://api.live.bilibili.com/room/v1/Room/room_init?id={} response\r\ntype RoomInfo struct {\r\n\tCode    int    `json:\"code\"`\r\n\tMsg     string `json:\"msg\"`\r\n\tMessage string `json:\"message\"`\r\n\tData    struct {\r\n\t\tRoomId      int   `json:\"room_id\"`\r\n\t\tShortId     int   `json:\"short_id\"`\r\n\t\tUid         int   `json:\"uid\"`\r\n\t\tNeedP2P     int   `json:\"need_p2p\"`\r\n\t\tIsHidden    bool  `json:\"is_hidden\"`\r\n\t\tIsLocked    bool  `json:\"is_locked\"`\r\n\t\tIsPortrait  bool  `json:\"is_portrait\"`\r\n\t\tLiveStatus  int   `json:\"live_status\"`\r\n\t\tHiddenTill  int   `json:\"hidden_till\"`\r\n\t\tLockTill    int   `json:\"lock_till\"`\r\n\t\tEncrypted   bool  `json:\"encrypted\"`\r\n\t\tPwdVerified bool  `json:\"pwd_verified\"`\r\n\t\tLiveTime    int64 `json:\"live_time\"`\r\n\t\tRoomShield  int   `json:\"room_shield\"`\r\n\t\tIsSp        int   `json:\"is_sp\"`\r\n\t\tSpecialType int   `json:\"special_type\"`\r\n\t} `json:\"data\"`\r\n}\r\n\r\n// DanmuInfo\r\n// api https://api.live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo?id={}&type=0 response\r\ntype DanmuInfo struct {\r\n\tCode    int    `json:\"code\"`\r\n\tMessage string `json:\"message\"`\r\n\tTtl     int    `json:\"ttl\"`\r\n\tData    struct {\r\n\t\tGroup            string  `json:\"group\"`\r\n\t\tBusinessId       int     `json:\"business_id\"`\r\n\t\tRefreshRowFactor float64 `json:\"refresh_row_factor\"`\r\n\t\tRefreshRate      int     `json:\"refresh_rate\"`\r\n\t\tMaxDelay         int     `json:\"max_delay\"`\r\n\t\tToken            string  `json:\"token\"`\r\n\t\tHostList         []struct {\r\n\t\t\tHost    string `json:\"host\"`\r\n\t\t\tPort    int    `json:\"port\"`\r\n\t\t\tWssPort int    `json:\"wss_port\"`\r\n\t\t\tWsPort  int    `json:\"ws_port\"`\r\n\t\t} `json:\"host_list\"`\r\n\t} `json:\"data\"`\r\n}\r\n\r\nfunc GetUid(cookie string) (int, string, error) {\r\n\theaders := &http.Header{}\r\n\theaders.Set(\"cookie\", cookie)\r\n\tresp, err := HttpGet(\"https://api.bilibili.com/x/web-interface/nav\", headers)\r\n\tif err != nil {\r\n\t\treturn 0, \"\", err\r\n\t}\r\n\tj := gjson.ParseBytes(resp)\r\n\tif j.Get(\"code\").Int() != 0 || !j.Get(\"data.isLogin\").Bool() {\r\n\t\treturn 0, \"\", errors.New(j.Get(\"message\").String())\r\n\t}\r\n\tif !j.Get(\"data.wbi_img\").Exists() ||\r\n\t\t!j.Get(\"data.wbi_img.img_url\").Exists() ||\r\n\t\t!j.Get(\"data.wbi_img.sub_url\").Exists() {\r\n\t\treturn 0, \"\", errors.New(\"wbi_img not found in response\")\r\n\t}\r\n\timgUrl := j.Get(\"data.wbi_img.img_url\").String()\r\n\tsubUrl := j.Get(\"data.wbi_img.sub_url\").String()\r\n\t// 定义正则表达式，提取中间的32位十六进制字符串\r\n\tre := regexp.MustCompile(`/(\\w{32})\\.png`)\r\n\t// 匹配 img_url\r\n\timgMatches := re.FindStringSubmatch(imgUrl)\r\n\tif len(imgMatches) < 2 {\r\n\t\tpanic(\"img_url 中未找到32位字符串\")\r\n\t}\r\n\twbiImgBa := imgMatches[1]\r\n\r\n\t// 匹配 sub_url\r\n\tsubMatches := re.FindStringSubmatch(subUrl)\r\n\tif len(subMatches) < 2 {\r\n\t\tpanic(\"sub_url 中未找到32位字符串\")\r\n\t}\r\n\twbiSubBa := subMatches[1]\r\n\r\n\t// 拼接两个32位字符串为64位\r\n\twbiImgSub := wbiImgBa + wbiSubBa\r\n\tif len(wbiImgSub) != 64 {\r\n\t\tpanic(\"拼接后字符串长度不为64\")\r\n\t}\r\n\r\n\t// 索引重排表\r\n\tmixinKeyEncTab := []int{\r\n\t\t46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27, 43, 5, 49,\r\n\t\t33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13, 37, 48, 7, 16, 24, 55, 40,\r\n\t\t61, 26, 17, 0, 1, 60, 51, 30, 4, 22, 25, 54, 21, 56, 59, 6, 63, 57, 62, 11,\r\n\t\t36, 20, 34, 44, 52,\r\n\t}\r\n\t// 使用索引重排表对 wbiImgSub 进行重排\r\n\tvar newString []byte\r\n\tfor _, idx := range mixinKeyEncTab {\r\n\t\tif idx < 0 || idx >= len(wbiImgSub) {\r\n\t\t\tpanic(\"索引越界: \" + fmt.Sprintf(\"%d\", idx))\r\n\t\t}\r\n\t\tnewString = append(newString, wbiImgSub[idx])\r\n\t}\r\n\r\n\t// 截取前32位作为最终密钥\r\n\twbiMixinKey := string(newString[:32])\r\n\treturn int(j.Get(\"data.mid\").Int()), wbiMixinKey, nil\r\n}\r\n\r\n// 使用 url.Values 并正确编码\r\nfunc toWbiParamSafe(params string, wbiMixinKey string) string {\r\n\tvalues, _ := url.ParseQuery(params)\r\n\r\n\tif _, exists := values[\"wts\"]; !exists {\r\n\t\tvalues.Set(\"wts\", strconv.FormatInt(time.Now().Unix(), 10))\r\n\t}\r\n\r\n\t// 按照 key 字典序排序\r\n\tkeys := make([]string, 0, len(values))\r\n\tfor k := range values {\r\n\t\tkeys = append(keys, k)\r\n\t}\r\n\tsort.Strings(keys)\r\n\r\n\t// 拼接 key=value 形式\r\n\tvar orderedPairs []string\r\n\tfor _, k := range keys {\r\n\t\torderedPairs = append(orderedPairs, k+\"=\"+values.Get(k))\r\n\t}\r\n\tvaluesEncoded := strings.Join(orderedPairs, \"&\")\r\n\r\n\t// 计算签名\r\n\thash := md5.Sum([]byte(valuesEncoded + wbiMixinKey))\r\n\tmd5Hash := fmt.Sprintf(\"%x\", hash)\r\n\r\n\treturn valuesEncoded + \"&w_rid=\" + md5Hash\r\n}\r\n\r\nfunc GetDanmuInfo(roomID int, cookie string, wbiMixinKey string) (*DanmuInfo, error) {\r\n\tresult := &DanmuInfo{}\r\n\theaders := &http.Header{}\r\n\theaders.Set(\"cookie\", cookie)\r\n\t//headers.Set(\"content-type\", \"application/json\")\r\n\t//headers.Set(\"accept-encoding\", \"gzip, deflate, br, zstd\")\r\n\t//headers.Set(\"accept-language\", \"zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7\")\r\n\tparams := fmt.Sprintf(\"id=%d&type=0\", roomID)\r\n\tparams = toWbiParamSafe(params, wbiMixinKey)\r\n\troomIDurl := fmt.Sprintf(\"https://api.live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo?%s\", params)\r\n\terr := GetJsonWithHeader(roomIDurl, headers, result)\r\n\tif err != nil {\r\n\t\treturn nil, err\r\n\t}\r\n\tif result.Code == -352 {\r\n\t\treturn nil, errors.New(\"触发风控\")\r\n\t}\r\n\treturn result, nil\r\n}\r\n\r\nfunc GetRoomInfo(roomID int) (*RoomInfo, error) {\r\n\tresult := &RoomInfo{}\r\n\terr := GetJson(fmt.Sprintf(\"https://api.live.bilibili.com/room/v1/Room/room_init?id=%d\", roomID), result)\r\n\tif err != nil {\r\n\t\treturn nil, err\r\n\t}\r\n\treturn result, nil\r\n}\r\n\r\nfunc GetRoomRealID(roomID int) (string, error) {\r\n\tres, err := GetRoomInfo(roomID)\r\n\tif err != nil {\r\n\t\treturn \"\", err\r\n\t}\r\n\treturn strconv.Itoa(res.Data.RoomId), nil\r\n}\r\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/blivedm-go/api/info.go b/blivedm-go/api/info.go
+--- a/blivedm-go/api/info.go	(revision cb5aa32aeb889396ad5e3449c0f4f4dcba5e4ad1)
++++ b/blivedm-go/api/info.go	(date 1751467193746)
+@@ -5,6 +5,7 @@
+ 	"errors"
+ 	"fmt"
+ 	"github.com/tidwall/gjson"
++	log "github.com/zeromicro/go-zero/core/logx"
+ 	"net/http"
+ 	"net/url"
+ 	"regexp"
+@@ -152,6 +153,28 @@
+ 	return valuesEncoded + "&w_rid=" + md5Hash
+ }
+ 
++type BuvidData struct {
++	Code int `json:"code"`
++	Data struct {
++		B3 string `json:"b_3"`
++		B4 string `json:"b_4"`
++	} `json:"data"`
++	Message string `json:"message"`
++}
++
++func GetBuvid3A4() (buvid3, buvid4 string, err error) {
++	headers := &http.Header{}
++	roomIDurl := "https://api.bilibili.com/x/frontend/finger/spi"
++	result := &BuvidData{}
++	err = GetJsonWithHeader(roomIDurl, headers, result)
++	if err != nil {
++		return "", "", err
++	}
++	if result.Code != 0 {
++		return "", "", errors.New(result.Message)
++	}
++	return result.Data.B3, result.Data.B4, nil
++}
+ func GetDanmuInfo(roomID int, cookie string, wbiMixinKey string) (*DanmuInfo, error) {
+ 	result := &DanmuInfo{}
+ 	headers := &http.Header{}
+@@ -167,6 +190,9 @@
+ 		return nil, err
+ 	}
+ 	if result.Code == -352 {
++		log.Errorf("request data: %+v", roomIDurl)
++		log.Errorf("header data: %+v", headers)
++		log.Errorf("response data: %+v", result)
+ 		return nil, errors.New("触发风控")
+ 	}
+ 	return result, nil
+Index: http/bullet.go
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>package http\r\n\r\nimport (\r\n\t\"bytes\"\r\n\t\"encoding/json\"\r\n\t\"errors\"\r\n\t\"github.com/avast/retry-go/v4\"\r\n\t\"github.com/xbclub/BilibiliDanmuRobot-Core/entity\"\r\n\t\"github.com/xbclub/BilibiliDanmuRobot-Core/svc\"\r\n\t\"github.com/zeromicro/go-zero/core/logx\"\r\n\t\"io\"\r\n\t\"mime/multipart\"\r\n\t\"net/http\"\r\n\t\"strconv\"\r\n\t\"time\"\r\n)\r\n\r\n//func GetDanmuInfo(svcCtx *svc.ServiceContext) (*entity.ResponseBulletInfo, error) {\r\n//\tvar err error\r\n//\tvar resp *resty.Response\r\n//\tvar url = \"https://api.live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo?id=\" + strconv.Itoa(svcCtx.Config.RoomId) + \"&type=0\"\r\n//\tr := &entity.ResponseBulletInfo{}\r\n//\tif resp, err = cli.R().\r\n//\t\tSetHeader(\"user-agent\", userAgent).\r\n//\t\tGet(url); err != nil {\r\n//\t\tlogx.Error(\"请求getDanmuInfo失败：\", err)\r\n//\t\treturn nil, err\r\n//\t}\r\n//\tif err = json.Unmarshal(resp.Body(), r); err != nil {\r\n//\t\tlogx.Error(\"Unmarshal失败：\", err, \"body:\", string(resp.Body()))\r\n//\t\treturn nil, err\r\n//\t}\r\n//\r\n//\treturn r, nil\r\n//}\r\n\r\nfunc Send(msg string, svcCtx *svc.ServiceContext, reply ...*entity.DanmuMsgTextReplyInfo) error {\r\n\tvar err error\r\n\tvar url = \"https://api.live.bilibili.com/msg/send\"\r\n\tvar respdata *entity.DanmuResp = new(entity.DanmuResp)\r\n\tm := make(map[string]string)\r\n\tm[\"bubble\"] = \"5\"\r\n\tm[\"msg\"] = msg\r\n\tm[\"color\"] = \"4546550\"\r\n\t//m[\"mode\"] = \"4\"\r\n\tm[\"fontsize\"] = \"25\"\r\n\tm[\"rnd\"] = strconv.FormatInt(time.Now().Unix(), 10)\r\n\t//m[\"room_type\"] = \"0\"\r\n\t//m[\"jumpfrom\"] = \"0\"\r\n\t//m[\"reply_attr\"] = \"0\"\r\n\tif len(reply) > 0 {\r\n\t\tm[\"reply_mid\"] = reply[0].ReplyUid\r\n\t\tif len(reply[0].ReplyMsgId) > 0 {\r\n\t\t\tm[\"replay_dmid\"] = reply[0].ReplyMsgId\r\n\t\t}\r\n\t}\r\n\tm[\"roomid\"] = strconv.Itoa(svcCtx.Config.RoomId)\r\n\tm[\"csrf\"] = CookieList[\"bili_jct\"]\r\n\tm[\"csrf_token\"] = CookieList[\"bili_jct\"]\r\n\terr = retry.Do(func() error {\r\n\t\t_, data, err := postWithFormData(http.MethodPost, url, userAgent, CookieStr, &m)\r\n\t\tif err != nil {\r\n\t\t\tlogx.Errorf(\"请求send失败：%v\", err)\r\n\t\t\treturn err\r\n\t\t}\r\n\t\terr = json.Unmarshal(data, respdata)\r\n\t\tif err != nil {\r\n\t\t\tlogx.Errorf(\"send弹幕响应解析失败:%v\", err)\r\n\t\t\treturn nil\r\n\t\t}\r\n\t\tif respdata.Code != 0 {\r\n\t\t\tlogx.Infof(\"请求send失败:%s\", respdata.Msg)\r\n\t\t\treturn errors.New(respdata.Msg)\r\n\t\t}\r\n\t\treturn nil\r\n\t}, retry.Attempts(3), retry.Delay(1*time.Second))\r\n\tif err != nil {\r\n\t\tlogx.Error(err)\r\n\t}\r\n\treturn nil\r\n}\r\nfunc postWithFormData(method, url, ua, cookie string, postData *map[string]string) (int, []byte, error) {\r\n\tbody := new(bytes.Buffer)\r\n\tw := multipart.NewWriter(body)\r\n\tfor k, v := range *postData {\r\n\t\tw.WriteField(k, v)\r\n\t}\r\n\tw.Close()\r\n\treq, _ := http.NewRequest(method, url, body)\r\n\treq.Header.Set(\"Content-Type\", w.FormDataContentType())\r\n\treq.Header.Set(\"Cookie\", cookie)\r\n\treq.Header.Set(\"user-agent\", ua)\r\n\tresp, err := http.DefaultClient.Do(req)\r\n\tif err != nil {\r\n\t\tlogx.Error(err)\r\n\t\treturn 0, nil, err\r\n\t}\r\n\tdata, _ := io.ReadAll(resp.Body)\r\n\tresp.Body.Close()\r\n\treturn resp.StatusCode, data, nil\r\n}\r\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/http/bullet.go b/http/bullet.go
+--- a/http/bullet.go	(revision cb5aa32aeb889396ad5e3449c0f4f4dcba5e4ad1)
++++ b/http/bullet.go	(date 1751467193749)
+@@ -72,6 +72,9 @@
+ 			logx.Infof("请求send失败:%s", respdata.Msg)
+ 			return errors.New(respdata.Msg)
+ 		}
++		if respdata.Msg == "f" {
++			logx.Infof("请求send失败:%s , %s", respdata.Msg, "弹幕内容包含敏感词，被服务器拒绝")
++		}
+ 		return nil
+ 	}, retry.Attempts(3), retry.Delay(1*time.Second))
+ 	if err != nil {
